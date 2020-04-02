@@ -9,6 +9,6 @@ To read the dataset, functions such as read.csv() and read.csv2() can be used de
 
 To read the functions, each file should be downloaded from the **Functions** folder in this repository, and pasted in the directory folder used by R (the command *getwd()* allows to visualize the current directory). The command *source("function_name.R")* allows to read the function file. The command *source(file.choose())* allows to open a dialog box presented to the user to browse the file in the computer.
 
-The first time that a function is used, it automatically installs all the required packages (it might take a while). ALternatively, R packages can be installed using the command *installed.packages("package_name")*.
+The first time that a function is used, it automatically installs all the required packages (it might take a while). ALternatively, R packages can be installed using the command *install.packages("package_name")*.
 
 The file **Analytical_pipeline.html** includes examples of applications of the functions to the sample dataset *sample_data.csv*.
