@@ -3,7 +3,7 @@ Analytical pipeline and functions for testing the performance of sleep-tracking 
 
 The repository includes a set of functions based on the R environment that implement the analytical steps described in the article "A standardized framework for testing the performance of sleep-tracking technology: Step-by-step guidelines and open-source code" (Menghini, Cellini, Goldstone, Baker, de Zambotti, 2020).
 
-The **analytical pipeline** for applying the functions to a dataset is depicted at https://sri-human-sleep.github.io/sleep-trackers-performance/AnalyticalPipeline.html
+The **analytical pipeline** for applying the functions to a dataset is depicted at https://sri-human-sleep.github.io/sleep-trackers-performance/AnalyticalPipeline_v1.0.0.html
 
 To use the functions, it is required to (1) download and install R (https://cran.r-project.org/), and eventually RStudio (https://rstudio.com/), (2) prepare a dataset of epoch-by-epoch data (as described in the main article), and (3) load both the dataset and the functions in R.
 
