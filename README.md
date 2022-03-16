@@ -6,9 +6,7 @@ Menghini, L., Cellini, N., Goldstone, A., Baker, F. C., & de Zambotti, M. (2021)
 
 
 ## Analytical pipeline
-The **analytical pipeline** for applying the functions to a dataset is depicted at: 
-
-https://sri-human-sleep.github.io/sleep-trackers-performance/AnalyticalPipeline_v1.0.0.html
+The **analytical pipeline** for applying the functions to a dataset is depicted at: \newline https://sri-human-sleep.github.io/sleep-trackers-performance/AnalyticalPipeline_v1.0.0.html
 
 ## R functions
 To use the functions, it is required to (1) download and install R (https://cran.r-project.org/), (2) prepare a dataset of epoch-by-epoch data (as described in the article), and (3) load both the dataset and the functions in R.
