@@ -7,7 +7,7 @@ Menghini, L., Cellini, N., Goldstone, A., Baker, F. C., & de Zambotti, M. (2021)
 <br>
 
 ## Analytical pipeline
-The **analytical pipeline** for applying the functions to a dataset is depicted at [this page](https://sri-human-sleep.github.io/sleep-trackers-performance-pipeline/AnalyticalPipeline_v1.0.0.html).
+The **analytical pipeline** for applying the functions to a dataset is depicted at [this page](https://sri-human-sleep.github.io/sleep-trackers-performance/AnalyticalPipeline_v1.0.0.html).
 
 <br>
 
