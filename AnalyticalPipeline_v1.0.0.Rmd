@@ -1,0 +1,2838 @@
+---
+title: "Analytical pipeline for testing the performance of sleep-tracking technology v1.0.0"
+author: Luca Menghini,$^{1,2}$ \and 
+        Nicola Cellini,$^{2,3,4,5}$ \and
+        Aimee Goldstone,$^1$ \and
+        Fiona C. Baker,$^{1,6}$ \and
+        Massimiliano de Zambotti$^1$
+date: $^1$Center for Health Sciences, SRI International, Menlo Park, CA, USA; \newline
+      $^2$Department of General Psychology, University of Padova, Padua, Italy; \newline
+      $^3$Padova Neuroscience Center, University of Padova, Padua, Italy; \newline
+      $^4$Department of Biomedical Sciences, University of Padova, Padua, Italy; \newline
+      $^5$Human Inspired Technology Center, University of Padova, Padua, Italy; \newline
+      $^6$Brain Function Research Group, School of Psychology, University of the Witwatersrand, Johannesburg, South Africa \newline
+    \newline  
+    \newline
+    \today 
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    css: styles.css
+  pdf_document: default
+  word_document: default
+  theme: united
+---
+
+<br>
+
+# Aims and content
+
+The present document integrates the article “A standardized framework for testing the performance of sleep-tracking technology: Step-by-step guidelines and open-source code”, and it includes the code for running the essential steps to test the performance of a device under assessment (e.g., a consumer wearable sleep-tracking device) in measuring sleep as compared with the gold-standard reference method (polysomnography, PSG) or alternative reference method (e.g., actigraphy, sleep diary). 
+
+The functions depicted below are available also from the following public repository: https://github.com/SRI-human-sleep/sleep-trackers-performance )
+
+The document includes the following sections:
+
+1. **Data structure**: a sample dataset with the essential epoch-by-epoch data structure is loaded and considered the starting point for analyses.
+
+2. **Discrepancy analysis**: individual- and group-level sleep measures are generated for both the reference method and the device under assessment, along with their bias, the limits of agreement (LoAs), and their 95% confidence intervals. Bland-Altman plots are provided.
+
+3. **Epoch-by-epoch analysis**: error matrices (also referred to as confusion matrices), performance metrics at both the individual- and group-level, and secondary statistics are generated based on epoch-by-epoch data.
+
+A function is provided for each step of the pipeline, which can be applied to any dataset that meets the assumptions below, to generate the respective output.
+
+<br>
+
+## Glossary
+
+- PSG	= Polysomnography
+
+- TIB = Time in bed
+
+- TST	= Total Sleep Time
+
+- SOL	= Sleep Onset Latency
+
+- SE	= Sleep Efficiency
+
+- WASO = Wake After Sleep Onset
+
+- REM	= Rapid Eye Movement
+
+- EBE	= Epoch-by-Epoch 
+
+- PPV = Positive Predictive Value
+
+- NPV = Negative Predictive Value
+
+- PABAK = Prevalence-Adjusted Bias-Adjusted Kappa
+
+- ROC = Receiver Operating Characteristic
+
+<br>
+
+Note also that in the new generation of multi-sensor sleep-tracking devices providing sleep staging information, ‘Light Sleep’ is usually considered equivalent to PSG-derived N1 + N2 sleep, while ‘Deep Sleep’ is usually considered equivalent to PSG-derived N3 sleep. When testing the performance of a device, we recommend checking with the device manufacturer for sleep stage specification.
+
+<br>
+
+## Assumptions
+
+The starting point of each of the following steps is a data structure based on the following assumptions:
+
+<div class="alert alert-info">
+**- Measurement systems:** sleep has been measured with both a *device* under assessment (e.g., a consumer sleep tracker) and a *reference* method (e.g., *PSG*)
+
+**- Epoch length**: both device and reference recordings have the same epoch length (e.g. 30-seconds or 1-min level).
+
+**- Recording bounds**: both device and reference recordings are confined to the period between lights-off and lights-on (i.e., both recordings share the same time in bed).
+
+**- Synchronization**: the device and reference recordings have been synchronized on an epoch level and encoded using the same coding system (e.g. 0 = wake in both device and reference data).
+
+**- Staging**: the device provides information on PSG-equivalent sleep staging, either as sleep/wake (typical of standard actigraphy) or as wake/light/deep/REM (typical of more modern consumer sleep trackers).
+
+**- Number of nights**: only one night per subject has been recorded (the same procedures might apply to multiple nights, by aggregating night-by-night outcomes).
+
+**- Missing data**: the dataset should not contain any missing data (i.e., both device and reference information must exist for each epoch).
+
+<br>
+
+Please refer to de Zambotti et al. (2019) and Depner et al. (2019) for guidelines and details about implementation and use of consumer sleep technology.
+
+</div>
+
+```{r setup, echo=FALSE,warning=FALSE,message=FALSE}
+
+rm(list=ls())
+
+```
+
+<br>
+
+# 1. Data structure {.tabset .tabset-fade .tabset-pills}
+
+As a first step, we load a sample dataset organized with the data structure described in the main article.
+
+<br>
+
+## SLEEP STAGING
+
+<br>
+
+Here, we show the dataset with sleep stage information, encoded as: 0 = wake, 1 = light sleep (N1 or N2), 2 = deep sleep (N3), and 3 = REM sleep. The dataset is in a long format that includes one column with the subject identifier, one column for the epoch identifier, and two columns reporting the device and the reference data, respectively.
+
+```{r warning=FALSE,message=FALSE}
+
+(raw.data <- read.csv("sample_data.csv"))
+
+```
+
+<br>
+
+## SLEEP/WAKE
+
+<br>
+
+To account for cases where only sleep/wake dichotomous data are allowed by the device, we also recode our sample dataset with 10 = wake and 5 = sleep.
+
+```{r warning=FALSE,message=FALSE}
+
+# dichotomic recoding of raw dataset
+dic.data <- raw.data
+dic.data[dic.data$reference!=0,"reference"] = 5 # 5 when sleep
+dic.data[dic.data$reference==0,"reference"] = 10 # 10 when wake
+dic.data[dic.data$device!=0,"device"] = 5
+dic.data[dic.data$device==0,"device"] = 10
+dic.data
+
+```
+
+<br>
+
+# 2. Discrepancy analysis 
+
+As a second step, we perform the essential procedures to analyze the discrepancy between device- and reference-derived sleep measures (e.g., total sleep time, wake after sleep onset, sleep onset latency). For each measure, the discrepancies will be computed at both individual-level and group-level, and Bland-Altman plots will be generated.
+
+<br>
+
+## 2.1. Sleep measures computation {.tabset .tabset-fade .tabset-pills}
+
+First, the raw data are used to generate a dataset of sleep measures based on the definitions provided in the main article. This is done with the **ebe2sleep.R** function, which allows users to specify the following arguments:
+
+- *data*: data.frame including the raw data to be used, organized with the data structure shown above.
+
+- *idCol*, *RefCol* and *deviceCol*: character strings indicating the names of the columns for subjects, reference and device epochs, respectively.
+
+- *epochLength*: numeric value indicating the epoch duration in seconds (default: 30).
+
+- *staging*: logical value indicates whether the raw data includes sleep stages (wake, light, deep and REM) or not, FALSE assumes data consists of only wake/sleep distinction (default: TRUE).
+
+- *stages*: numeric vector indicating the coding system used for wake, light, deep and REM sleep (in this order). The default coding system is c(wake = 0, light = 1, deep = 2, REM = 3). Only wake and sleep should be indicated when staging = FALSE, e.g. c(wake = 0, sleep = 1).
+
+- *digits*: numeric value specifying the decimal precision for the output (default: 2).
+
+<br>
+
+<details><summary>Show function</summary>
+<p>
+
+```{r warning=FALSE,message=FALSE}
+
+ebe2sleep <- function(data=NA,idCol="subject",RefCol="reference",deviceCol="device",epochLenght=30,
+                      staging=TRUE,stages=c(wake=0,light=1,deep=2,REM=3),digits=2){
+  
+  # renaming variables
+  colnames(data) <- gsub(idCol,"ID",colnames(data))
+  data$ID <- as.factor(data$ID)
+  colnames(data) <- gsub(RefCol,"ref",colnames(data))
+  colnames(data) <- gsub(deviceCol,"device",colnames(data))
+  
+  # setting stages as 0 = wake, 1 = light, 2 = deep, 3 = REM
+  if(staging==TRUE){ 
+    data$ref <- as.integer(as.character(factor(data$ref,levels=as.numeric(stages),labels=c(0,1,2,3))))
+    data$device <- as.integer(as.character(factor(data$device,levels=as.numeric(stages),labels=c(0,1,2,3))))
+    
+    } else { # setting stages as 0 = wake, 1 = sleep when staging = FALSE
+      if(length(stages)>2){ stop("only two elements should be used in the stages argument when staging = FALSE,
+                                 e.g., stages = c(wake = 0, sleep = 1)") }
+      data$ref <- as.integer(as.character(factor(data$ref,levels=as.numeric(stages),labels=c(0,1))))
+      data$device <- as.integer(as.character(factor(data$device,levels=as.numeric(stages),labels=c(0,1)))) }
+  
+  # empty dataframe of sleep measures (stages length is not provided when staging = FALSE)
+  sleep.metrics <- as.data.frame(matrix(nrow=0,ncol=ifelse(staging==TRUE,22,10)))
+
+  for(ID in levels(data$ID)){
+
+    sleepID <- data[data$ID==ID,]
+  
+    # TIB = number of minutes between lights on and lights off
+    TIB <- nrow(sleepID)*epochLenght/60
+  
+    # TST = number of minutes scored as sleep
+    TST_ref <- nrow(sleepID[sleepID$ref!=0,])*epochLenght/60
+    TST_device <- nrow(sleepID[sleepID$device!=0,])*epochLenght/60
+  
+    # SE = percentage of sleep time over TIB
+    SE_ref <- 100*TST_ref/TIB
+    SE_device <- 100*TST_device/TIB
+  
+    # SOL = number of minutes scored as wake before the first epoch scored as sleep
+    SOL_ref = SOL_device = 0
+    for(i in 1:nrow(sleepID)){ if(sleepID[i,"ref"]==0){ SOL_ref = SOL_ref + 1 } else { break } }
+    for(i in 1:nrow(sleepID)){ if(sleepID[i,"device"]==0){ SOL_device = SOL_device + 1 } else { break } }
+    SOL_ref <- SOL_ref*epochLenght/60
+    SOL_device <- SOL_device*epochLenght/60
+
+    # WASO = number of minutes scored as wake after the first epoch scored as sleep
+    WASO_ref <- sleepID[(SOL_ref*60/epochLenght+1):nrow(sleepID),]
+    WASO_ref <- nrow(WASO_ref[WASO_ref$ref==0,])*epochLenght/60
+    WASO_device <- sleepID[(SOL_device*60/epochLenght+1):nrow(sleepID),]
+    WASO_device <- nrow(WASO_device[WASO_device$device==0,])*epochLenght/60
+    
+    if(staging==TRUE){
+      
+      # Light = number of minutes scored as Light sleep (N1 + N2)
+      Light_ref <- nrow(sleepID[sleepID$ref==1,])*epochLenght/60
+      Light_device <- nrow(sleepID[sleepID$device==1,])*epochLenght/60
+    
+      # Deep = number of minutes scored as Light sleep (N3)
+      Deep_ref <- nrow(sleepID[sleepID$ref==2,])*epochLenght/60
+      Deep_device <- nrow(sleepID[sleepID$device==2,])*epochLenght/60
+    
+      # REM = number of minutes scored as REM sleep
+      REM_ref <- nrow(sleepID[sleepID$ref==3,])*epochLenght/60
+      REM_device <- nrow(sleepID[sleepID$device==3,])*epochLenght/60
+  
+      # LightPerc = percentage of Light sleep over TST
+      LightPerc_ref <- 100*Light_ref/TST_ref
+      LightPerc_device <- 100*Light_device/TST_device
+  
+      # DeepPerc  = percentage of Deep sleep over TST
+      DeepPerc_ref <- 100*Deep_ref/TST_ref
+      DeepPerc_device <- 100*Deep_device/TST_device
+
+      # REMPerc = percentage of REM sleep over TST
+      REMPerc_ref <- 100*REM_ref/TST_ref
+      REMPerc_device <- 100*REM_device/TST_device
+  
+      # filling dataframe of sleep metrics
+      sleep.metrics <- rbind(sleep.metrics,
+                             data.frame(subject=ID,TIB=TIB,
+                                        # sleep/wake metrics
+                                        TST_ref,TST_device,SE_ref,SE_device,SOL_ref,SOL_device,WASO_ref,WASO_device,
+                                        # sleep stages duration metrics
+                                        Light_ref,Light_device,Deep_ref,Deep_device,REM_ref,REM_device,
+                                        # sleep stages percentages metrics
+                                        LightPerc_ref,LightPerc_device,DeepPerc_ref,DeepPerc_device,REMPerc_ref,REMPerc_device))
+      
+    } else {
+      
+      sleep.metrics <- rbind(sleep.metrics,
+                             data.frame(subject=ID,TIB=TIB,
+                                        # sleep/wake metrics
+                                        TST_ref,TST_device,SE_ref,SE_device,SOL_ref,SOL_device,WASO_ref,WASO_device))
+      
+    }
+    
+  }
+  
+  # rounding values and returning dataset
+  nums <- vapply(sleep.metrics, is.numeric, FUN.VALUE = logical(1))
+  sleep.metrics[,nums] <- round(sleep.metrics[,nums], digits = digits)
+  return(sleep.metrics) 
+}
+
+```
+
+</p>
+</details>
+
+<br>
+
+### SLEEP STAGING
+
+<br>
+
+Here, we use the function to generate the dataset of sleep measures by assuming that sleep staging is allowed by the device.
+
+```{r warning=FALSE,message=FALSE}
+
+(sleep.data <- ebe2sleep(data = raw.data, idCol = "subject", RefCol = "reference", deviceCol = "device",
+                         epochLenght = 30, staging = TRUE, stages = c(wake = 0, light = 1, deep = 2, REM = 3), digits = 2))
+
+```
+
+<br>
+
+### SLEEP/WAKE
+
+<br>
+
+Here, we use the function to generate the dataset of sleep measures by assuming that only sleep/wake patterns (and not sleep staging) are allowed by the device.
+
+```{r warning=FALSE,message=FALSE}
+
+(sleep.data.dic <- ebe2sleep(data = dic.data, idCol = "subject", RefCol = "reference", deviceCol = "device",
+                             epochLenght = 30, staging = FALSE, stages = c(wake = 10, sleep = 5), digits = 2))
+
+```
+
+<br>
+
+## 2.2. Individual-level discrepancies {.tabset .tabset-fade .tabset-pills}
+
+Here, we compute the differences between device- and reference -derived sleep measures for each subject. This is done with the **indDiscr.R function**, which allows the user to specify the following arguments:
+
+- *data*: data.frame of sleep measures (such that generated with the *ebe2sleep.R* function).
+
+- *staging*: logical value indicates whether the raw data includes sleep stages (wake, light, deep and REM) or not, FALSE assumes data consists of only wake/sleep distinction (default: TRUE).
+
+- *digits*: numeric value specifying the decimal precision for the output (default: 2).
+
+- *doPlot*: logical value indicating if the data should be plotted (default: TRUE, requires the *ggplot2* and the *reshape2* package).
+
+<br>
+
+<details><summary>Show function</summary>
+<p>
+
+```{r warning=FALSE,message=FALSE}
+
+indDiscr <- function(data=NA,staging=TRUE,digits=2,doPlot=TRUE){
+  
+  indivDiscr <- data.frame(subject=data$subject,
+                           TST_diff = data$TST_device - data$TST_ref, # TST
+                           SE_diff = data$SE_device - data$SE_ref, # SE
+                           SOL_diff = data$SOL_device - data$SOL_ref, # SOL
+                           WASO_diff = data$WASO_device - data$WASO_ref) # WASO
+  
+  if(staging==TRUE){
+    
+    indivDiscr <- cbind(indivDiscr,
+                        data.frame(
+                          
+                          # adding sleep stages duration
+                          Light_diff = data$Light_device - data$Light_ref,
+                          Deep_diff = data$Deep_device - data$Deep_ref,
+                          REM_diff = data$REM_device - data$REM_ref,
+                          
+                          # adding sleep stages percentages
+                          LightPerc_diff = data$LightPerc_device - data$LightPerc_ref,
+                          DeepPerc_diff = data$DeepPerc_device - data$DeepPerc_ref,
+                          REMPerc_diff = data$REMPerc_device - data$REMPerc_ref
+                          
+                        ))
+    
+  }
+  
+  # rounding values
+  nums <- vapply(indivDiscr, is.numeric, FUN.VALUE = logical(1))
+  indivDiscr[,nums] <- round(indivDiscr[,nums], digits = digits)
+  
+  if(doPlot==TRUE){
+    
+    require(ggplot2) 
+    require(reshape2)
+    
+    # normalizing data by column to have color code
+    melted.perc <- absDiscr <- indivDiscr
+    absDiscr[,2:ncol(absDiscr)] <- abs(absDiscr[,2:ncol(absDiscr)])
+    for(i in 1:nrow(melted.perc)){ for(j in 2:ncol(melted.perc)){ 
+      melted.perc[i,j] <- 100*(absDiscr[i,j] - min(absDiscr[,j]))/(max(absDiscr[,j])-min(absDiscr[,j]))
+      } }
+    melted.perc <- melt(melted.perc[,!grepl("diffPerc",colnames(melted.perc))])
+    melted.perc$variable <- gsub("Perc","%",gsub("_diff","",melted.perc$variable))
+    melted.perc[melted.perc$value>100,"value"] <- 100 # bounding at 100
+    
+    melted.labs <- melt(indivDiscr[,!grepl("diffPerc",colnames(indivDiscr))])
+    melted.labs$variable <- gsub("Perc","%",gsub("_diff","",melted.labs$variable))
+    
+    # sorting axis labels
+    if(staging == TRUE){ sleep.levels <- c("TST","SE","WASO","SOL","Light","Deep","REM","Light%","Deep%","REM%")
+    } else { sleep.levels <- c("TST","SE","WASO","SOL") }
+    
+    # generating plot
+    p <- ggplot(data=melted.perc,aes(x=ordered(variable,levels=sleep.levels),
+                                     y=ordered(subject,levels=rev(levels(subject))),fill=value)) +
+      geom_tile() + xlab("variable") + ylab("subject") +
+      scale_fill_gradient2(low="white",high="#f03b20",
+                           limit = c(0,100),
+                           space = "Lab",
+                           name="Min-max normalized \ndiscrepancy (%)",
+                           guide="legend",
+                           breaks=round(seq(100,0,length.out = 11),2),
+                           minor_breaks=round(seq(100,0,length.out = 11),2)) +
+      geom_text(data=melted.labs,aes(x=ordered(variable,levels=sleep.levels),
+                                     y=ordered(subject,levels=rev(levels(subject))),label=value),color="black",size=3) +
+      ggtitle("Discrepancies between device and ref by subject") + theme(panel.background = element_blank())
+    
+    return(list(indivDiscr,p))
+    
+  } else { return(indivDiscr) }
+  
+}
+
+```
+
+</p>
+</details>
+
+<br>
+
+### SLEEP STAGING
+
+<br>
+
+Here, the function is applied to generate individual discrepancies by assuming that sleep staging is allowed by the device.
+
+```{r warning=FALSE,message=FALSE,out.width='55%'}
+
+indDiscr(data = sleep.data, staging=TRUE, digits=2, doPlot = FALSE)
+
+```
+
+<br>
+
+### SLEEP/WAKE
+
+<br>
+
+Here, the function is applied to generate individual discrepancies by assuming that only sleep/wake patterns (and not sleep staging) are allowed by the device.
+
+```{r warning=FALSE,message=FALSE,out.width='55%'}
+
+indDiscr(data = sleep.data.dic, staging=FALSE, digits=2, doPlot = FALSE)
+
+```
+
+<br>
+
+## 2.2.1. Data visualization {.tabset .tabset-fade .tabset-pills}
+
+Here, we set the *doPlot* argument as TRUE in the *DiscrAnalysis_ind* function to plot the results. The generated plot (table format) includes the same values shown in the table above, with colors indicating the minimum-maximum, normalized values. This allows a visual check for outliers for each of the main sleep outcomes.
+
+<br>
+
+### SLEEP STAGING
+
+<br>
+
+Here, the function is applied by assuming that sleep staging is allowed by the device.
+
+```{r warning=FALSE,message=FALSE,out.width='70%'}
+
+indDiscr(data = sleep.data, staging=TRUE, digits=2, doPlot = TRUE)[2]
+
+```
+
+<br>
+
+### SLEEP/WAKE
+
+<br>
+
+Here, the function is applied by assuming that only sleep/wake patterns (and not sleep staging) are allowed by the device.
+
+```{r warning=FALSE,message=FALSE,out.width='70%'}
+
+indDiscr(data = sleep.data.dic, staging=FALSE, digits=2, doPlot = TRUE)[2]
+
+```
+
+<br>
+
+## 2.3. Group-level discrepancies {.tabset .tabset-fade .tabset-pills}
+
+Here, we compute the standard metrics to evaluate the discrepancy/agreement between device- and reference-derived sleep measures, based on the definitions provided in the main article, in compliance with Bland and Altman (1999). As recommended by Euser, Dekker and le Cessie (2008), when a significant correlation is observed between differences and PSG-derived measures (proportional bias), the LOAs are indicated as a function of the PSG-derived value. This is done with the **groupDiscr.R function**, which allows specification of the following arguments:
+
+- *data*: data.frame of sleep measures with a structure matching that generated with the *ebe2sleep.R* function).
+
+- *measures*: character vector indicating the name of the two columns to be considered (i.e., fist column: device, second column: reference). Default is c("TST_device","TST_ref").
+
+- *size*: character indicating what should be used as the size of measurement: “reference” (default) for using the reference method as we suggest in our article, “mean” for using the averages of ref- and device-derived measures, as originally suggested by Bland & Altman (1999).
+
+- *logTransf*: logical value indicating if data should be log transformed to deal with heteroscedasticity or non-normal distribution of differences (default: FALSE). If TRUE, data bias and LOAs are computed on the log-transformed data and back-transformed to express LOAs as a function of the size of measurement, following the method proposed by Euser, Dekker and le Cessie (2008).
+
+- *CI.type*: character string indicating the type of confidence intervals to be used: "classic" (default) returns intervals based on the t-distribution, "boot" returns intervals computed by bootstrap with 10000 replicates (requires the *boot* package).
+
+- *CI.level*: numeric value indicating the confidence intervals to be computed on bias and LOAs (default: .95).
+
+- *boot.type*: character string indicating the type of bootstrapped confidence intervals. The value should be one of "basic" (default), "norm", "stud", "perc", or "bca" (see *?boot.ci* for details). This argument is not considered when CI.type = "classic".
+
+- *boot.R*: numeric value indicating the number of boostrap replicates (default: 10,000). Higher values require more time for computing CI (see also *?boot*). This argument is not considered when CI.type = "classic".
+
+- *digits*: numeric value specifying the decimal precision for the output (default: 2).
+
+- *warnings*: logical value indicating if warnings regarding assumptions and analytical details should be displayed (default: TRUE).
+
+The function is partially based on the *BlandAltmanLeh* package (Lehnert, 2015).
+
+<br>
+
+<details><summary>Show function</summary>
+<p>
+
+```{r warning=FALSE,message=FALSE}
+
+groupDiscr <- function(data=NA,measures=c("TST_device","TST_ref"),size="reference",logTransf=FALSE,
+                       CI.type="classic",CI.level=.95,boot.type="basic",boot.R=10000,digits=2,warnings=TRUE){
+  
+  require(BlandAltmanLeh)
+  
+  # setting measure name and unit of measurement
+  measure <- gsub("_ref","",gsub("_device","",measures[1]))
+  if(any(grepl("efficiency|EFFICIENCY|se|SE|eff|EFF|perc|Perc|PERC|%",measure))){
+    meas.unit <- "%" } else { meas.unit <- "min" }
+  if(warnings==TRUE){cat("\n\n----------------\n Measure:",measure,"\n----------------")}
+  
+  # packages and functions to be used with boostrap CI
+  if(CI.type=="boot"){ require(boot)
+    # functions to generate bootstrap CI for model parameters
+    boot.reg <- function(data,formula,indices){ return(coef(lm(formula,data=data[indices,]))[2]) } # slope
+    boot.int <- function(data,formula,indices){ return(coef(lm(formula,data=data[indices,]))[1]) } # intercept
+    boot.res <- function(data,formula,indices){return(1.96*sd(resid(lm(formula,data=data[indices,]))))} # 1.96 SD of residuals
+    if(warnings==TRUE){cat("\n\nComputing boostrap CI with method '",boot.type,"' ...",sep="")}
+    } else if(CI.type!="classic") { stop("Error: CI.type can be either 'classic' or 'boot'") }
+  
+  # data to be used
+  ba.stat <- bland.altman.stats(data[,measures[1]],data[,measures[2]],conf.int=CI.level)
+  if(size=="reference"){
+    ba <- data.frame(size=ba.stat$groups$group2,diffs=ba.stat$diffs)
+    xlab <- paste("Reference-derived",measure)
+    } else if(size=="mean"){
+      ba <- data.frame(size=ba.stat$means,diffs=ba.stat$diffs)
+      xlab <- paste("Mean",measure,"by device and reference")
+    } else { stop("Error: size argument can be either 'reference' or 'mean'") }
+  
+  # basic output table
+  out <- data.frame(measure=paste(measure," (",meas.unit,")",sep=""),
+                    
+                    # mean and standard deviation for ref and device
+                    device = paste(round(mean(ba.stat$groups$group1,na.rm=TRUE),digits)," (",
+                                   round(sd(ba.stat$groups$group1,na.rm=TRUE),digits),")",sep=""),
+                    reference = paste(round(mean(ba.stat$groups$group2,na.rm=TRUE),digits)," (",
+                                      round(sd(ba.stat$groups$group2,na.rm=TRUE),digits),")",sep=""),
+                    
+                    # CI type
+                    CI.type=CI.type,
+                    CI.level=CI.level)
+  
+  # ..........................................
+  # 1. TESTING PROPORTIONAL BIAS
+  # ..........................................
+  m <- lm(diffs~size,ba)
+  if(CI.type=="classic"){ CI <- confint(m,level=CI.level)[2,] 
+  } else { CI <- boot.ci(boot(data=ba,statistic=boot.reg,formula=diffs~size,R=boot.R),
+                         type=boot.type,conf=CI.level)[[4]][4:5] }
+  prop.bias <- ifelse(CI[1] > 0 | CI[2] < 0, TRUE, FALSE)
+  
+  # updating output table
+  out <- cbind(out,prop.bias=prop.bias)
+  
+  # ...........................................
+  # 1.1. DIFFERENCES INDEPENDENT FROM SIZE
+  # ...........................................
+  if(prop.bias == FALSE){
+    
+    if(CI.type=="boot"){ # changing bias CI when CI.type="boot"
+      ba.stat$CI.lines[3] <- boot.ci(boot(ba$diffs,function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                                     type=boot.type,conf=CI.level)[[4]][4]
+      ba.stat$CI.lines[4] <- boot.ci(boot(ba$diffs,function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                                     type=boot.type,conf=CI.level)[[4]][5] }
+    
+    out <- cbind(out, # updating output table
+                 # bias (SD) [CI]
+                 bias=paste(round(ba.stat$mean.diffs,digits)," (",round(sd(ba.stat$diffs),digits),")",sep=""),
+                 bias_CI=paste("[",round(ba.stat$CI.lines[3],digits),", ",round(ba.stat$CI.lines[4],digits),"]",sep=""))
+    
+    # ..........................................
+    # 1.2. DIFFERENCES PROPORTIONAL TO SIZE
+    # ..........................................
+    } else { 
+        
+      b0 <- coef(m)[1]
+      b1 <- coef(m)[2]
+      
+      # warning message
+      if(warnings==TRUE){cat("\n\nWARNING: differences in ",measure," might be proportional to the size of measurement (coeff. = ",
+          round(b1,2)," [",round(CI[1],2),", ",round(CI[2],2),"]",").",
+          "\nBias and LOAs are represented as a function of the size of measurement.",sep="")}
+      
+      # intercept CI
+      if(CI.type=="classic"){ CInt <- confint(m,level=CI.level)[1,]
+      } else { CInt <- boot.ci(boot(data=ba,statistic=boot.int,formula=diffs~size,R=boot.R),
+                               type=boot.type,conf=CI.level)[[4]][4:5] }
+      
+      out <- cbind(out, # updating output table
+                   
+                   # bias and CI following Bland & Altman (1999): D = b0 + b1 * size
+                   bias=paste(round(b0,digits)," + ",round(b1,digits)," x ",ifelse(size=="mean","mean","ref"),sep=""),
+                   bias_CI=paste("b0 = [",round(CInt[1],digits),", ",round(CInt[2],digits),
+                                 "], b1 = [",round(CI[1],digits),", ",round(CI[2],digits),"]",sep="")) }
+  
+  # ..............................................
+  # 2. LOAs ESTIMATION FROM ORIGINAL DATA
+  # ..............................................
+  if(logTransf == FALSE){
+    
+    # testing heteroscedasticity
+    mRes <- lm(abs(resid(m))~size,ba)
+    if(CI.type=="classic"){ CIRes <- confint(mRes,level=CI.level)[2,]
+    } else { CIRes <- boot.ci(boot(data=ba,statistic=boot.reg,formula=abs(resid(m))~size,R=boot.R),
+                              type=boot.type,conf=CI.level)[[4]][4:5] }
+    heterosced <- ifelse(CIRes[1] > 0 | CIRes[2] < 0,TRUE,FALSE)
+    
+    # testing normality of differences
+    shapiro <- shapiro.test(ba.stat$diffs)
+    if(shapiro$p.value <= .05){ normality = FALSE
+      if(warnings==TRUE){cat("\n\nWARNING: differences in ",measure,
+          " might be not normally distributed (Shapiro-Wilk W = ",round(shapiro$statistic,3),", p = ",round(shapiro$p.value,3),
+          ").","\nBootstrap CI (CI.type='boot') and log transformation (logTransf=TRUE) are recommended.",sep="")} 
+    } else { normality = TRUE }
+    
+    # updating output table
+    out <- cbind(out[,1:6],logTransf=FALSE,normality=normality,heterosced=heterosced,out[,7:ncol(out)])
+    
+    # ...............................................
+    # 2.1. CONSTANT BIAS AND HOMOSCEDASTICITY
+    # ............................................
+      if(prop.bias==FALSE & heterosced==FALSE){
+        
+        if(CI.type=="boot"){ # changing LOAs CI when CI.type="boot"
+          ba.stat$CI.lines[1] <- boot.ci(boot(ba$diffs-1.96*sd(ba.stat$diffs),
+                                              function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                                         type=boot.type,conf=CI.level)[[4]][4]
+          ba.stat$CI.lines[2] <- boot.ci(boot(ba$diffs-1.96*sd(ba.stat$diffs),
+                                              function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                                         type=boot.type,conf=CI.level)[[4]][5]
+          ba.stat$CI.lines[5] <- boot.ci(boot(ba$diffs+1.96*sd(ba.stat$diffs),
+                                              function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                                         type=boot.type,conf=CI.level)[[4]][4]
+          ba.stat$CI.lines[6] <- boot.ci(boot(ba$diffs+1.96*sd(ba.stat$diffs),
+                                              function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                                         type=boot.type,conf=CI.level)[[4]][5] }
+        
+        out <- cbind(out, # updating output table
+                     
+                     # lower LOA and CI
+                     LOA.lower = ba.stat$lower.limit,
+                     LOA.lower_CI = paste("[",round(ba.stat$CI.lines[1],2),", ",round(ba.stat$CI.lines[2],digits),"]",sep=""),
+                     
+                     # upper LOA and CI
+                     LOA.upper = ba.stat$upper.limit,
+                     LOA.upper_CI = paste("[",round(ba.stat$CI.lines[5],2),", ",round(ba.stat$CI.lines[6],digits),"]",sep=""))
+      
+    # ...............................................
+    # 2.2. PROPORTIONAL BIAS AND HOMOOSCEDASTICITY
+    # ...............................................
+    } else if(prop.bias==TRUE & heterosced==FALSE) { 
+        
+      # boostrapped CI in any case
+      if(warnings==TRUE){cat("\n\nLOAs CI are computed using boostrap with method '",boot.type,"'.",sep="")}
+      
+      require(boot)
+      
+      boot.res <- function(data,formula,indices){return(1.96*sd(resid(lm(formula,data=data[indices,]))))} # 1.96 SD of residuals
+      CI.sdRes <- boot.ci(boot(data=ba,statistic=boot.res,formula=diffs~size,R=boot.R),
+                          type=boot.type,conf=CI.level)[[4]][4:5]
+      
+      out <- cbind(out, # updating output table
+                   
+                   # lower LOA and CI following Bland & Altman (1999): LOAs = bias - 1.96sd of the residuals
+                   LOA.lower = paste("bias -",round(1.96*sd(resid(m)),digits)),
+                   LOA.lower_CI = paste("bias - [",round(CI.sdRes[1],digits),", ",round(CI.sdRes[2],digits),"]",sep=""),
+                   
+                   # upper LOA and CI following Bland & Altman (1999): LOAs = bias + 1.96sd of the residuals
+                   LOA.upper = paste("bias +",round(1.96*sd(resid(m)),digits)),
+                   LOA.upper_CI =paste("bias + [",round(CI.sdRes[1],digits),", ",round(CI.sdRes[2],digits),"]",sep="")) 
+      
+      # ............................................
+      # 2.3. HETEROSCEDASTICITY
+      # ............................................
+      } else if(heterosced==TRUE){
+          
+          c0 <- coef(mRes)[1]
+          c1 <- coef(mRes)[2]
+          
+          # warning message
+          if(warnings==TRUE){cat("\n\nWARNING: standard deviation of differences in ",measure,
+              " might be proportional to the size of measurement (coeff. = ",
+              round(c1,digits)," [",round(CIRes[1],digits),", ",round(CIRes[2],digits),"]",").",
+              "\nLOAs range is represented as a function of the size of measurement.",sep="")}
+          
+          # intercept CI
+          if(CI.type=="classic"){ CInt <- confint(mRes,level=CI.level)[1,]
+          } else { CInt <- boot.ci(boot(data=ba,statistic=boot.int,formula=abs(resid(m))~size,R=boot.R),
+                                   type=boot.type,conf=CI.level)[[4]][4:5] }
+          
+          out <- cbind(out, # updating output table
+                       
+                       # lower LOA and CI following Bland & Altman (1999): LOAs = meanDiff - 2.46(c0 + c1A)
+                       LOA.lower = paste("bias - 2.46(",round(c0,digits)," + ",round(c1,digits)," x ",
+                                         ifelse(size=="mean","mean","ref"),")",sep=""),
+                       LOA.lower_CI = paste("c0 = [",round(CInt[1],digits),", ",round(CInt[2],digits),
+                                            "], c1 = [",round(CIRes[1],digits),", ",round(CIRes[2],digits),"]",sep=""),
+                       
+                       # upper LOA and CI following Bland & Altman (1999): LOAs = meanDiff - 2.46(c0 + c1A)
+                       LOA.upper = paste("bias + 2.46(",round(c0,digits)," + ",round(c1,digits)," x ",
+                                         ifelse(size=="mean","mean","ref"),")",sep=""),
+                       LOA.upper_CI = paste("c0 = [",round(CInt[1],digits),", ",round(CInt[2],digits),
+                                            "], c1 = [",round(CIRes[1],digits),", ",round(CIRes[2],digits),"]",sep="")) }
+    
+  # ..............................................
+  # 3. LOAs ESTIMATION FROM LOG-TRANSFORMED DATA
+  # ..............................................
+  } else {
+    
+    # log transformation of data (add little constant to avoid Inf values)
+    if(warnings==TRUE){cat("\n\nLog transforming the data before computing LOAs...")}
+    ba.stat$groups$LOGgroup1 <- log(ba.stat$groups$group1 + .0001)
+    ba.stat$groups$LOGgroup2 <- log(ba.stat$groups$group2 + .0001)
+    ba.stat$groups$LOGdiff <- ba.stat$groups$LOGgroup1 - ba.stat$groups$LOGgroup2
+    if(size=="reference"){ baLog <- data.frame(size=ba.stat$groups$LOGgroup2,diffs=ba.stat$groups$LOGdiff)
+    } else { baLog <- data.frame(size=(ba.stat$groups$LOGgroup1 + ba.stat$groups$LOGgroup2)/2,diffs=ba.stat$groups$LOGdiff) }
+    
+    # testing heteroscedasticity
+    mRes <- lm(abs(resid(m))~size,baLog)
+    if(CI.type=="classic"){ CIRes <- confint(mRes,level=CI.level)[2,]
+    } else { CIRes <- boot.ci(boot(data=baLog,statistic=boot.reg,formula=abs(resid(m))~size,R=boot.R),
+                              type=boot.type,conf=CI.level)[[4]][4:5] }
+    heterosced <- ifelse(CIRes[1] > 0 | CIRes[2] < 0,TRUE,FALSE)
+    
+    # testing normality of differences
+    shapiro <- shapiro.test(baLog$diffs)
+    if(shapiro$p.value <= .05){ normality = FALSE
+      if(warnings==TRUE){cat("\n\nWARNING: differences in log transformed ",measure,
+          " might be not normally distributed (Shapiro-Wilk W = ",round(shapiro$statistic,3),", p = ",round(shapiro$p.value,3),
+          ").","\nBootstrap CI (CI.type='boot') are recommended.",sep="")} } else { normality = TRUE }
+    
+    # updating output table
+    out <- cbind(out[,1:6],logTransf=FALSE,normality=normality,heterosced=heterosced,out[,7:ncol(out)])
+    
+    # LOAs slope following Euser et al (2008) for antilog transformation: slope = 2 * (e^(1.96 SD) - 1)/(e^(1.96 SD) + 1)
+    ANTILOGslope <- function(x){ 2 * (exp(1.96 * sd(x)) - 1) / (exp(1.96*sd(x)) + 1) }
+    ba.stat$LOA.slope <- ANTILOGslope(baLog$diffs)
+    
+    # LOAs CI slopes 
+    if(CI.type=="classic"){ # classic CI
+      t1 <- qt((1 - CI.level)/2, df = ba.stat$based.on - 1) # t-value right
+      t2 <- qt((CI.level + 1)/2, df = ba.stat$based.on - 1) # t-value left
+      ba.stat$LOA.slope.CI.upper <- 2 * (exp(1.96 * sd(baLog$diffs) + t2 * sqrt(sd(baLog$diffs)^2 * 3/ba.stat$based.on)) - 1) /
+        (exp(1.96*sd(baLog$diffs) + t2 * sqrt(sd(baLog$diffs)^2 * 3/ba.stat$based.on)) + 1)
+      ba.stat$LOA.slope.CI.lower <- 2 * (exp(1.96 * sd(baLog$diffs) + t1 * sqrt(sd(baLog$diffs)^2 * 3/ba.stat$based.on)) - 1) /
+        (exp(1.96*sd(baLog$diffs) + t1 * sqrt(sd(baLog$diffs)^2 * 3/ba.stat$based.on)) + 1)
+      } else { # boostrap CI
+        ba.stat$LOA.slope.CI.lower <- boot.ci(boot(baLog$diffs,function(dat,idx) ANTILOGslope(dat[idx]),R=boot.R),
+                                              type=boot.type,conf=CI.level)[[4]][4]
+        ba.stat$LOA.slope.CI.upper <- boot.ci(boot(baLog$diffs,function(dat,idx) ANTILOGslope(dat[idx]),R=boot.R),
+                                              type=boot.type,conf=CI.level)[[4]][5] }
+    
+    # LOAs depending on mean and size (regardless if bias is proportional or not)
+    out <- cbind(out, # updating output table
+                 
+                 # lower LOA and CI
+                 LOA.lower = paste("bias - ",size," x ",round(ba.stat$LOA.slope,digits)),
+                 LOA.lower_CI = paste("bias - ",size," x [",round(ba.stat$LOA.slope.CI.lower,digits),
+                                      ", ",round(ba.stat$LOA.slope.CI.upper,digits),"]",sep=""),
+                 
+                 # upper LOA and CI
+                 LOA.upper = paste("bias + ",size," x ",round(ba.stat$LOA.slope,digits)),
+                 LOA.upper_CI = paste("bias + ",size," x [",round(ba.stat$LOA.slope.CI.lower,digits),
+                                      ", ",round(ba.stat$LOA.slope.CI.upper,digits),"]",sep="")) }
+  
+  
+  # rounding values
+  nums <- vapply(out, is.numeric, FUN.VALUE = logical(1))
+  out[,nums] <- round(out[,nums], digits = digits)
+  out[,nums] <- as.character(out[,nums]) # to prevent NA values when combined with other cases
+  row.names(out) <- NULL
+  
+  return(out)
+  
+}
+
+```
+
+</p>
+</details>
+
+<br>
+
+Here, the function is applied to the dataset generated with the *EBE2sleep* function. The *rbind* function is used to concatenate the information on each stage in a single output. The *CI.type* and the *logTransf* arguments are manipulated among sleep measures to show differences between the function settings. Note that a warning is returned in cases where a proportional bias and/or heteroscedasticity is detected (in these cases, the discrepancy metrics are computed according to the procedures described in the main article) or when the distribution of differences deviates from normality (i.e., based on the Shapiro-Wilk test). 
+
+<br>
+
+### SLEEP STAGING
+
+<br>
+
+Here, the function is applied by assuming that sleep staging is allowed by the device. 
+
+```{r warning=FALSE,message=FALSE}
+
+      # boostrapped CI on original data
+rbind(groupDiscr(data = sleep.data, measures=c("TST_device","TST_ref"), size="reference", 
+                 CI.type="boot", CI.level=.95, digits=2),
+      groupDiscr(data = sleep.data, measures=c("SE_device","SE_ref"), size="reference", 
+                 CI.type="boot", CI.level=.95, digits=2),
+      groupDiscr(data = sleep.data, measures=c("SOL_device","SOL_ref"), size="reference", 
+                 CI.type="boot", CI.level=.95, digits=2),
+      groupDiscr(data = sleep.data, measures=c("WASO_device","WASO_ref"), size="reference", 
+                 CI.type="boot", CI.level=.95, digits=2),
+      groupDiscr(data = sleep.data, measures=c("Light_device","Light_ref"), size="reference", 
+                 CI.type="boot", CI.level=.95, digits=2),
+      groupDiscr(data = sleep.data, measures=c("Deep_device","Deep_ref"), size="reference", 
+                 CI.type="boot", CI.level=.95, digits=2),
+      
+      # bootstrapped CI on log-transformed data
+      groupDiscr(data = sleep.data, measures=c("REM_device","REM_ref"), size = "reference", logTransf = TRUE, 
+                 CI.type="boot", CI.level=.95, digits=2),
+      groupDiscr(data = sleep.data, measures=c("LightPerc_device","LightPerc_ref"), size = "reference", logTransf = TRUE, 
+                 CI.type="boot",boot.type="basic",CI.level=.95, digits=2),
+      
+      # classic CI on log-transformed data
+      groupDiscr(data = sleep.data, measures=c("DeepPerc_device","DeepPerc_ref"), size  ="reference", logTransf = TRUE, 
+                 CI.type="classic", boot.type="basic", CI.level=.95, digits=2),
+      groupDiscr(data = sleep.data, measures=c("REMPerc_device","REMPerc_ref"), size="reference", logTransf = TRUE, 
+                 CI.type="classic",boot.type="basic",CI.level=.95, digits=2))
+
+```
+
+<br>
+
+### SLEEP/WAKE
+
+<br>
+
+Here, the function is applied by assuming that only sleep/wake patterns (and not sleep staging) are allowed by the device.
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+rbind(groupDiscr(data = sleep.data.dic, measures=c("TST_device","TST_ref"), 
+                 CI.type="boot", CI.level=.95, digits=2),
+      groupDiscr(data = sleep.data.dic, measures=c("SE_device","SE_ref"), logTransf = TRUE, 
+                 CI.type="boot", boot.type="basic", CI.level=.95, digits=2),
+      groupDiscr(data = sleep.data.dic, measures=c("SOL_device","SOL_ref"), 
+                 CI.type="classic", CI.level=.95, digits=2),
+      groupDiscr(data = sleep.data.dic, measures=c("WASO_device","WASO_ref"), logTransf = TRUE,
+                 CI.type="classic",boot.type="basic", CI.level=.95, digits=2))
+
+```
+
+<br>
+
+## 2.4. Bland-Altman plots {.tabset .tabset-fade .tabset-pills}
+
+The final step for discrepancy analysis uses the information reported above to generate the Bland-Altman plots. This is done with the **BAplot.R** function, which requires the *BlandAltmanLeh*, the *ggplot2* and *ggExtra* packages, and allows the user to specify the following arguments:
+
+- *data*: data.frame of sleep measures (such as that generated with the *ebe2sleep.R* function).
+
+- *measures*: character vector indicating the name of the two columns to be considered (i.e., fist column: device indicated by "measure_device", second column: reference indicated by "measure_ref"). Default is c("TST_device","TST_ref").
+
+- *xaxis*: character indicating what should be used as the x axis: "reference" (default) for using the reference method as we suggest in our article, "mean" for using the averages of ref- and device-derived measures, as originally suggested by Bland & Altman (1999).
+
+- *logTransf*: logical value indicating if data should be log transformed to deal with heteroscedasticity or non-normal distribution of differences (default: FALSE). If TRUE, data bias and LOAs are computed on the log-transformed data and back-transformed to express LOAs as a function of the size of measurement, following the method proposed by Euser, Dekker and le Cessie (2008).
+
+- *CI.type*: character string indicating the type of confidence intervals to be used: "classic" (default) returns intervals based on the t-distribution, "boot" returns intervals for means by bootstrap with 10000 replicates (requires *boot* package).
+
+- *CI.level*: numeric value indicating the confidence intervals to be computed on bias and LOAs (default: .95).
+
+- *boot.type*: character string indicating the type of bootstrapped confidence intervals. The value should be one of "basic" (default), "norm", "stud", "perc", or "bca" (see *?boot.ci* for details). Note that when a proportional bias is detected, only "basic" bootstrapped CI are shown. This argument is not considered when CI.type = "classic".
+
+- *boot.R*: numeric value indicating the number of boostrap replicates (default: 10,000). Higher values require more time for computing CI (see also *?boot*). This argument is not considered when CI.type = "classic".
+
+- *xlim* and *ylim*: numeric vector of two elements indicating the limits of the x and the y axis, respectively. If not specified (default), limits are selected based on the range of differences.
+
+- *warnings*: logical value indicating if warnings regarding assumptions and analytical details should be displayed (default: TRUE).
+
+<br>
+
+<details><summary>Show function</summary>
+<p>
+
+```{r }
+
+BAplot <- function(data=NA,measures=c("TST_device","TST_ref"),logTransf=FALSE,
+                   xaxis="reference",CI.type="classic",CI.level=.95,boot.type="basic",boot.R=10000,
+                   xlim=NA,ylim=NA,warnings=TRUE){
+  
+  require(BlandAltmanLeh); require(ggplot2); require(ggExtra)
+  
+  # setting labels
+  Measure <- gsub("_ref","",gsub("_device","",measures[1]))
+  measure <- gsub("TST","total sleep time (min)",Measure)
+  measure <- gsub("SE","sleep efficiency (%)",measure)
+  measure <- gsub("SOL","sleep onset latency (min)",measure)
+  measure <- gsub("WASO","wake after sleep onset (min)",measure)
+  measure <- gsub("LightPerc","light sleep percentage (%)",measure)
+  measure <- gsub("DeepPerc","deep sleep percentage (%)",measure)
+  measure <- gsub("REMPerc","REM sleep percentage (%)",measure)
+  measure <- gsub("Light","light sleep duration (min)",measure)
+  measure <- gsub("Deep","deep sleep duration (min)",measure)
+  if(grepl("REM",measure) & !grepl("%",measure)) { measure <- gsub("REM","REM sleep duration (min)",measure) }
+  if(warnings==TRUE){cat("\n\n----------------\n Measure:",Measure,"\n----------------")}
+  
+  # packages and functions to be used with boostrap CI
+  if(CI.type=="boot"){ require(boot)
+    # function to generate bootstrap CI for model parameters
+    boot.reg <- function(data,formula,indices){ return(coef(lm(formula,data=data[indices,]))[2]) }
+    # function for sampling and predicting Y values based on model
+    boot.pred <- function(data,formula,tofit) { indices <- sample(1:nrow(data),replace = TRUE)
+      return(predict(lm(formula,data=data[indices,]), newdata=data.frame(tofit))) }
+    if(warnings==TRUE){cat("\n\nComputing boostrap CI with method '",boot.type,"' ...",sep="")}
+    } else if(CI.type!="classic") { stop("Error: CI.type can be either 'classic' or 'boot'") }
+  
+  # data to be used
+  ba.stat <- bland.altman.stats(data[,measures[1]],data[,measures[2]],conf.int=CI.level)
+  if(xaxis=="reference"){
+    ba <- data.frame(size=ba.stat$groups$group2,diffs=ba.stat$diffs)
+    xlab <- paste("Reference",measure)
+    } else if(xaxis=="mean"){
+      ba <- data.frame(size=ba.stat$means,diffs=ba.stat$diffs)
+      xlab <- paste("Mean",measure,"by device and reference")
+    } else { stop("Error: xaxis argument can be either 'reference' or 'mean'") }
+  
+  # range of values to be fitted for drawing the lines (i.e., from min to max of x-axis values, by .1)
+  size <- seq(min(ba$size),max(ba$size),(max(ba$size)-min(ba$size))/((max(ba$size)-min(ba$size))*10))
+  
+  # basic plot
+  p <- ggplot(data=ba,aes(size,diffs))
+  
+  # ..........................................
+  # 1. TESTING PROPORTIONAL BIAS
+  # ..........................................
+  m <- lm(diffs~size,ba)
+  if(CI.type=="classic"){ CI <- confint(m,level=CI.level)[2,] 
+  } else { CI <- boot.ci(boot(data=ba,statistic=boot.reg,formula=diffs~size,R=boot.R),
+                         type=boot.type,conf=CI.level)[[4]][4:5] }
+  prop.bias <- ifelse(CI[1] > 0 | CI[2] < 0, TRUE, FALSE)
+  
+  # ...........................................
+  # 1.1. DIFFERENCES INDEPENDENT FROM SIZE
+  # ...........................................
+  if(prop.bias == FALSE){ 
+      
+      if(CI.type=="boot"){ # changing bias CI when CI.type="boot"
+        ba.stat$CI.lines[3] <- boot.ci(boot(ba$diffs,function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                                       type=boot.type,conf=CI.level)[[4]][4]
+        ba.stat$CI.lines[4] <- boot.ci(boot(ba$diffs,function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                                       type=boot.type,conf=CI.level)[[4]][5] }
+      
+      p <- p + # adding lines to plot
+        
+        # bias and CI (i.e., mean diff)
+        geom_line(aes(y=ba.stat$mean.diffs),colour="red",size=1.5) +
+        geom_line(aes(y=ba.stat$CI.lines[3]),colour="red",linetype=2,size=1) +
+        geom_line(aes(y=ba.stat$CI.lines[4]),colour="red",linetype=2,size=1)
+      
+      # ..........................................
+      # 1.2. DIFFERENCES PROPORTIONAL TO SIZE
+      # ..........................................
+      } else {
+        
+        b0 <- coef(m)[1]
+        b1 <- coef(m)[2]
+        
+        # warning message
+        if(warnings==TRUE){cat("\n\nWARNING: differences in ",Measure," might be proportional to the size of measurement (coeff. = ",
+            round(b1,2)," [",round(CI[1],2),", ",round(CI[2],2),"]",").",
+            "\nBias and LOAs are plotted as a function of the size of measurement.",sep="")}
+        
+        # modeling bias following Bland & Altman (1999): D = b0 + b1 * size
+        y.fit <- data.frame(size,y.bias=b0+b1*size) 
+        
+        # bias CI
+        if(CI.type=="classic"){ # classic ci
+          y.fit$y.biasCI.upr <- predict(m,newdata=data.frame(y.fit$size),interval="confidence",level=CI.level)[,3]
+          y.fit$y.biasCI.lwr <- predict(m,newdata=data.frame(y.fit$size),interval="confidence",level=CI.level)[,2]
+          } else { # boostrap CI 
+            fitted <- t(replicate(boot.R,boot.pred(ba,"diffs~size",y.fit))) # sampling CIs
+            y.fit$y.biasCI.upr <- apply(fitted,2,quantile,probs=c((1-CI.level)/2))
+            y.fit$y.biasCI.lwr <- apply(fitted,2,quantile,probs=c(CI.level+(1-CI.level)/2)) }
+        
+        p <- p + # adding lines to plot
+          
+          # bias and CI (i.e., D = b0 + b1 * size)
+          geom_line(data=y.fit,aes(y=y.bias),colour="red",size=1.5) +
+          geom_line(data=y.fit,aes(y=y.biasCI.upr),colour="red",linetype=2,size=1) +
+          geom_line(data=y.fit,aes(y=y.biasCI.lwr),colour="red",linetype=2,size=1) }
+  
+  # ..............................................
+  # 2. LOAs ESTIMATION FROM ORIGINAL DATA
+  # ..............................................
+  if(logTransf == FALSE){
+    
+    # testing heteroscedasticity
+    mRes <- lm(abs(resid(m))~size,ba)
+    if(CI.type=="classic"){ CIRes <- confint(mRes,level=CI.level)[2,]
+    } else { CIRes <- boot.ci(boot(data=ba,statistic=boot.reg,formula=abs(resid(m))~size,R=boot.R),
+                              type=boot.type,conf=CI.level)[[4]][4:5] }
+    heterosced <- ifelse(CIRes[1] > 0 | CIRes[2] < 0,TRUE,FALSE)
+    
+    # testing normality of differences
+    shapiro <- shapiro.test(ba$diffs)
+    if(shapiro$p.value <= .05){
+       if(warnings==TRUE){cat("\n\nWARNING: differences in ",Measure,
+           " might be not normally distributed (Shapiro-Wilk W = ",round(shapiro$statistic,3),", p = ",round(shapiro$p.value,3),
+           ").","\nBootstrap CI (CI.type='boot') and log transformation (logTransf=TRUE) are recommended.",sep="")} }
+     
+    # ............................................
+    # 2.1. CONSTANT BIAS AND HOMOSCEDASTICITY
+    # ............................................
+    if(prop.bias==FALSE & heterosced==FALSE){
+        
+        if(CI.type=="boot"){ # changing LOAs CI when CI.type="boot"
+          ba.stat$CI.lines[1] <- boot.ci(boot(ba$diffs-1.96*sd(ba.stat$diffs),
+                                              function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                                         type=boot.type,conf=CI.level)[[4]][4]
+          ba.stat$CI.lines[2] <- boot.ci(boot(ba$diffs-1.96*sd(ba.stat$diffs),
+                                              function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                                         type=boot.type,conf=CI.level)[[4]][5]
+          ba.stat$CI.lines[5] <- boot.ci(boot(ba$diffs+1.96*sd(ba.stat$diffs),
+                                              function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                                         type=boot.type,conf=CI.level)[[4]][4]
+          ba.stat$CI.lines[6] <- boot.ci(boot(ba$diffs+1.96*sd(ba.stat$diffs),
+                                              function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                                         type=boot.type,conf=CI.level)[[4]][5] }
+        
+        p <- p + # adding lines to plot
+      
+        # Upper LOA and CI (i.e., mean diff + 1.96 SD)
+        geom_line(aes(y=ba.stat$upper.limit),colour="darkgray",size=1.3) +
+        geom_line(aes(y=ba.stat$CI.lines[5]),colour="darkgray",linetype=2,size=1) +
+        geom_line(aes(y=ba.stat$CI.lines[6]),colour="darkgray",linetype=2,size=1) +
+        
+        # Lower LOA and CI (i.e., mean diff - 1.96 SD)
+        geom_line(aes(y=ba.stat$lower.limit),colour="darkgray",size=1.3) +
+        geom_line(aes(y=ba.stat$CI.lines[1]),colour="darkgray",linetype=2,size=1) +
+        geom_line(aes(y=ba.stat$CI.lines[2]),colour="darkgray",linetype=2,size=1)
+        
+        # ............................................
+        # 2.2. PROPORTIONAL BIAS AND HOMOSCEDASTICITY
+        # ............................................
+        } else if(prop.bias==TRUE & heterosced==FALSE) { 
+          
+          # modeling LOAs following Bland & Altman (1999): LOAs = bias +- 1.96sd of the residuals
+          y.fit$y.LOAu = b0+b1*size + 1.96*sd(resid(m))
+          y.fit$y.LOAl = b0+b1*size - 1.96*sd(resid(m))
+          
+          # LOAs CI based on bias CI +- 1.96sd of the residuals
+          if(warnings==TRUE){cat(" Note that LOAs CI are represented based on bias CI.")}
+          y.fit$y.LOAu.upr = y.fit$y.biasCI.upr + 1.96*sd(resid(m))
+          y.fit$y.LOAu.lwr = y.fit$y.biasCI.lwr + 1.96*sd(resid(m))
+          y.fit$y.LOAl.upr = y.fit$y.biasCI.upr - 1.96*sd(resid(m))
+          y.fit$y.LOAl.lwr = y.fit$y.biasCI.lwr - 1.96*sd(resid(m))
+          
+          # ............................................
+          # 2.3. CONSTANT BIAS AND HOMOSCEDASTICITY
+          # ............................................
+          } else if(prop.bias==FALSE & heterosced==TRUE) {
+            
+            c0 <- coef(mRes)[1]
+            c1 <- coef(mRes)[2]
+  
+            # warning message
+            if(warnings==TRUE){cat("WARNING: SD of differences in ",Measure,
+                " might be proportional to the size of measurement (coeff. = ",
+                round(c1,2)," [",round(CIRes[1],2),", ",round(CIRes[2],2),"]",").",
+                "\nLOAs range is plotted as a function of the size of measurement.",sep="")}
+  
+            # modeling LOAs following Bland & Altman (1999): LOAs = meanDiff +- 2.46(c0 + c1A)
+            y.fit <- data.frame(size=size,
+                                y.LOAu = ba.stat$mean.diffs + 2.46*(c0+c1*size),
+                                y.LOAl = ba.stat$mean.diffs - 2.46*(c0+c1*size))
+            
+            # LOAs CI
+            if(CI.type=="classic"){ # classic ci
+              fitted <- predict(mRes,newdata=data.frame(y.fit$size),interval="confidence",level=CI.level) # based on mRes
+              y.fit$y.LOAu.upr <- ba.stat$mean.diffs + 2.46*fitted[,3]
+              y.fit$y.LOAu.lwr <- ba.stat$mean.diffs + 2.46*fitted[,2]
+              y.fit$y.LOAl.upr <- ba.stat$mean.diffs - 2.46*fitted[,3]
+              y.fit$y.LOAl.lwr <- ba.stat$mean.diffs - 2.46*fitted[,2]
+              } else { # boostrap CI
+                fitted <- t(replicate(boot.R,boot.pred(ba,"abs(resid(lm(diffs ~ size))) ~ size",y.fit)))
+                y.fit$y.LOAu.upr <- ba.stat$mean.diffs + 2.46*apply(fitted,2,quantile,probs=c(CI.level+(1-CI.level)/2))
+                y.fit$y.LOAu.lwr <- ba.stat$mean.diffs + 2.46*apply(fitted,2,quantile,probs=c((1-CI.level)/2))
+                y.fit$y.LOAl.upr <- ba.stat$mean.diffs - 2.46*apply(fitted,2,quantile,probs=c(CI.level+(1-CI.level)/2))
+                y.fit$y.LOAl.lwr <- ba.stat$mean.diffs - 2.46*apply(fitted,2,quantile,probs=c((1-CI.level)/2)) }
+            
+          # ............................................
+          # 2.4. PROPORTIONAL BIAS AND HETEROSCEDASTICITY
+          # ............................................ 
+          } else if(prop.bias==TRUE & heterosced==TRUE) {
+            
+          c0 <- coef(mRes)[1]
+          c1 <- coef(mRes)[2]
+          
+          # warning message
+          if(warnings==TRUE){cat("\n\nWARNING: SD of differences in ",Measure,
+              " might be proportional to the size of measurement (coeff. = ",
+              round(c1,2)," [",round(CIRes[1],2),", ",round(CIRes[2],2),"]",").",
+              "\nLOAs range is plotted as a function of the size of measurement.",sep="")}
+          
+          # modeling LOAs following Bland & Altman (1999): LOAs = b0 + b1 * size +- 2.46(c0 + c1A) 
+          y.fit$y.LOAu = b0+b1*size + 2.46*(c0+c1*size)
+          y.fit$y.LOAl = b0+b1*size - 2.46*(c0+c1*size)
+          
+          # LOAs CI
+          if(CI.type=="classic"){ # classic ci
+            fitted <- predict(mRes,newdata=data.frame(y.fit$size),interval="confidence",level=CI.level) # based on mRes
+            y.fit$y.LOAu.upr <- b0+b1*size + 2.46*fitted[,3]
+            y.fit$y.LOAu.lwr <- b0+b1*size + 2.46*fitted[,2]
+            y.fit$y.LOAl.upr <- b0+b1*size - 2.46*fitted[,3]
+            y.fit$y.LOAl.lwr <- b0+b1*size - 2.46*fitted[,2] 
+            } else { # boostrap CI
+              fitted <- t(replicate(boot.R,boot.pred(ba,"abs(resid(lm(diffs ~ size))) ~ size",y.fit)))
+              y.fit$y.LOAu.upr <- b0+b1*size + 2.46*apply(fitted,2,quantile,probs=c(CI.level+(1-CI.level)/2))
+              y.fit$y.LOAu.lwr <- b0+b1*size + 2.46*apply(fitted,2,quantile,probs=c((1-CI.level)/2))
+              y.fit$y.LOAl.upr <- b0+b1*size - 2.46*apply(fitted,2,quantile,probs=c(CI.level+(1-CI.level)/2))
+              y.fit$y.LOAl.lwr <- b0+b1*size - 2.46*apply(fitted,2,quantile,probs=c((1-CI.level)/2)) }}
+    
+    if(prop.bias==TRUE | heterosced==TRUE){
+      
+      p <- p + # adding lines to plot
+          
+          # Upper LOA and CI
+          geom_line(data=y.fit,aes(y=y.LOAu),colour="darkgray",size=1.3) +
+          geom_line(data=y.fit,aes(y=y.LOAu.upr),colour="darkgray",linetype=2,size=1) +
+          geom_line(data=y.fit,aes(y=y.LOAu.lwr),colour="darkgray",linetype=2,size=1) +
+          
+          # Lower LOA and CI
+          geom_line(data=y.fit,aes(y=y.LOAl),colour="darkgray",size=1.3) +
+          geom_line(data=y.fit,aes(y=y.LOAl.upr),colour="darkgray",linetype=2,size=1) +
+          geom_line(data=y.fit,aes(y=y.LOAl.lwr),colour="darkgray",linetype=2,size=1)
+      
+    }
+    
+  # ..............................................
+  # 3. LOAs ESTIMATION FROM LOG-TRANSFORMED DATA
+  # ..............................................
+  } else {
+      
+    # log transformation of data (add little constant to avoid Inf values)
+    if(warnings==TRUE){cat("\n\nLog transforming data ...")}
+    ba.stat$groups$LOGgroup1 <- log(ba.stat$groups$group1 + .0001)
+    ba.stat$groups$LOGgroup2 <- log(ba.stat$groups$group2 + .0001)
+    ba.stat$groups$LOGdiff <- ba.stat$groups$LOGgroup1 - ba.stat$groups$LOGgroup2
+    if(xaxis=="reference"){ baLog <- data.frame(size=ba.stat$groups$LOGgroup2,diffs=ba.stat$groups$LOGdiff)
+    } else { baLog <- data.frame(size=(ba.stat$groups$LOGgroup1 + ba.stat$groups$LOGgroup2)/2,diffs=ba.stat$groups$LOGdiff) }
+    
+    # testing heteroscedasticity
+    mRes <- lm(abs(resid(m))~size,baLog)
+    if(CI.type=="classic"){ CIRes <- confint(mRes,level=CI.level)[2,]
+    } else { CIRes <- boot.ci(boot(data=baLog,statistic=boot.reg,formula=abs(resid(m))~size,R=boot.R),
+                              type=boot.type,conf=CI.level)[[4]][4:5] }
+    heterosced <- ifelse(CIRes[1] > 0 | CIRes[2] < 0,TRUE,FALSE)
+      
+    # testing normality of differences
+    shapiro <- shapiro.test(baLog$diffs)
+    if(shapiro$p.value <= .05){
+      if(warnings==TRUE){cat("\n\nWARNING: differences in log transformed ",Measure,
+          " might be not normally distributed (Shapiro-Wilk W = ",round(shapiro$statistic,3),", p = ",round(shapiro$p.value,3),
+          ").","\nBootstrap CI (CI.type='boot') are recommended.",sep="")} }
+    
+    # LOAs slope following Euser et al (2008) for antilog transformation: slope = 2 * (e^(1.96 SD) - 1)/(e^(1.96 SD) + 1)
+    ANTILOGslope <- function(x){ 2 * (exp(1.96 * sd(x)) - 1) / (exp(1.96*sd(x)) + 1) }
+    ba.stat$LOA.slope <- ANTILOGslope(baLog$diffs)
+    
+    # LOAs CI slopes 
+    if(CI.type=="classic"){ # classic CI
+      t1 <- qt((1 - CI.level)/2, df = ba.stat$based.on - 1) # t-value right
+      t2 <- qt((CI.level + 1)/2, df = ba.stat$based.on - 1) # t-value left
+      ba.stat$LOA.slope.CI.upper <- 2 * (exp(1.96 * sd(baLog$diffs) + t2 * sqrt(sd(baLog$diffs)^2 * 3/ba.stat$based.on)) - 1) /
+        (exp(1.96*sd(baLog$diffs) + t2 * sqrt(sd(baLog$diffs)^2 * 3/ba.stat$based.on)) + 1)
+      ba.stat$LOA.slope.CI.lower <- 2 * (exp(1.96 * sd(baLog$diffs) + t1 * sqrt(sd(baLog$diffs)^2 * 3/ba.stat$based.on)) - 1) /
+        (exp(1.96*sd(baLog$diffs) + t1 * sqrt(sd(baLog$diffs)^2 * 3/ba.stat$based.on)) + 1)
+      } else { # boostrap CI
+        ba.stat$LOA.slope.CI.upper <- boot.ci(boot(baLog$diffs,
+                                                   function(dat,idx) ANTILOGslope(dat[idx]),R=boot.R),
+                                              type=boot.type,conf=CI.level)[[4]][4]
+        ba.stat$LOA.slope.CI.lower <- boot.ci(boot(baLog$diffs,
+                                                   function(dat,idx) ANTILOGslope(dat[idx]),R=boot.R),
+                                              type=boot.type,conf=CI.level)[[4]][5] }
+    
+    # Recomputing LOAs and their CIs as a function of size multiplied by the computed slopes
+    y.fit <- data.frame(size,
+                        ANTLOGdiffs.upper = size * ba.stat$LOA.slope, # upper LOA
+                        ANTLOGdiffs.upper.lower = size * ba.stat$LOA.slope.CI.lower,
+                        ANTLOGdiffs.upper.upper = size * ba.stat$LOA.slope.CI.upper,
+                        ANTLOGdiffs.lower = size * ((-1)*ba.stat$LOA.slope), # lower LOA
+                        ANTLOGdiffs.lower.lower = size * ((-1)*ba.stat$LOA.slope.CI.lower),
+                        ANTLOGdiffs.lower.upper = size * ((-1)*ba.stat$LOA.slope.CI.upper))
+    
+    # adding bias values based on prop.bias
+    if(prop.bias==FALSE){ y.fit$y.bias <- rep(ba.stat$mean.diffs,nrow(y.fit)) } else { y.fit$y.bias <- b0+b1*y.fit$size }
+    
+    p <- p + # adding lines to plot
+      
+      # UPPER LIMIT (i.e., bias + 2 * (e^(1.96 SD) - 1)/(e^(1.96 SD) + 1))
+      geom_line(data=y.fit,aes(y = y.bias + ANTLOGdiffs.upper),colour="darkgray",size=1.3) +
+      geom_line(data=y.fit,aes(y = y.bias + ANTLOGdiffs.upper.upper),colour="darkgray",linetype=2,size=1) +
+      geom_line(data=y.fit,aes(y = y.bias + ANTLOGdiffs.upper.lower),colour="darkgray",linetype=2,size=1) +
+      
+      # LOWER LIMIT (i.e., bias - 2 * (e^(1.96 SD) - 1)/(e^(1.96 SD) + 1))
+      geom_line(data=y.fit,aes(y = y.bias + ANTLOGdiffs.lower),colour="darkgray",size=1.3) +
+      geom_line(data=y.fit,aes(y = y.bias + ANTLOGdiffs.lower.upper),colour="darkgray",linetype=2,size=1) +
+      geom_line(data=y.fit,aes(y = y.bias + ANTLOGdiffs.lower.lower),colour="darkgray",linetype=2,size=1)
+    
+    # ..........................................
+    # 3.3. HETEROSCHEDASTICITY (only a warning)
+    # ..........................................
+    if(heterosced==TRUE){
+      
+      # warning message
+      if(warnings==TRUE){cat("\n\nWARNING: standard deviation of differences in in log transformed ",Measure,
+          " might be proportional to the size of measurement (coeff. = ",
+          round(coef(mRes)[2],2)," [",round(CIRes[1],2),", ",round(CIRes[2],2),"]",").",sep="")} }}
+  
+  
+  p <- p + # adding last graphical elements and plotting with marginal density distribution
+    
+    geom_point(size=4.5,shape=20) +
+    xlab(xlab) + ylab(paste("Device - reference differences in\n",measure,sep="")) +
+    ggtitle(paste("Bland-Altman plot of",measure))+
+    theme(axis.text = element_text(size=12,face="bold"),
+          axis.title = element_text(size=15,face="bold",colour="black"),
+          plot.title = element_text(hjust = 0.5,size=12,face="bold"))
+  if(!is.na(ylim[1])){ p <- p + ylim(ylim) }
+  if(!is.na(xlim[1])){ p <- p + xlim(xlim) }
+  return(ggMarginal(p,fill="lightgray",colour="lightgray",size=4,margins="y"))
+  
+}
+
+```
+
+</p>
+</details>
+
+<br>
+
+Here, the function is applied to generate Bland-Altman plots for each sleep measure. Outputs are generated both by using the original data (*logTransf = FALSE*) and by log transforming the data before computing bias and LOAs (*logTransf = TRUE*). In each case, plots are generated with both t-derived (*CI.type = "classic"*) and bootstrapped confidence intervals (*CI.type = "boot"*). Any plot is generated by considering the reference method as the size of measurement (*xaxis = "reference"*), as suggested by de Zambotti et al. (2019). Note that a warning message is returned when a proportional bias and/or heteroscedasticity is detected, and bias and LOAs are represented accordingly.
+
+<br>
+
+### TST {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+#### ORIGINAL DATA {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r message=FALSE,warning=FALSE}
+
+BAplot(data=sleep.data,measures=c("TST_device","TST_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r message=FALSE}
+
+BAplot(data=sleep.data,measures=c("TST_device","TST_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+#### LOG TRANSFORMED {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("TST_device","TST_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r message=FALSE}
+
+BAplot(data=sleep.data,measures=c("TST_device","TST_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+### SE {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+#### ORIGINAL DATA {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("SE_device","SE_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("SE_device","SE_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+#### LOG TRANSFORMED {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("SE_device","SE_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("SE_device","SE_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+### SOL {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+#### ORIGINAL DATA {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r warning=FALSE,message=FALSE}
+
+BAplot(data=sleep.data,measures=c("SOL_device","SOL_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("SOL_device","SOL_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+#### LOG TRANSFORMED {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r warning=FALSE,message=FALSE}
+
+BAplot(data=sleep.data,measures=c("SOL_device","SOL_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("SOL_device","SOL_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+### WASO {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+#### ORIGINAL DATA  {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("WASO_device","WASO_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("WASO_device","WASO_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+#### LOG TRANSFORMED  {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("WASO_device","WASO_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("WASO_device","WASO_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+### LIGHT {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+#### ORIGINAL DATA {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("Light_device","Light_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("Light_device","Light_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+#### LOG TRANSFORMED {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("Light_device","Light_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("Light_device","Light_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+### DEEP {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+#### ORIGINAL DATA {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("Deep_device","Deep_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("Deep_device","Deep_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+#### LOG TRANSFORMED {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("Deep_device","Deep_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("Deep_device","Deep_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+### REM {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+#### ORIGINAL DATA {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("REM_device","REM_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("REM_device","REM_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+#### LOG TRANSFORMED {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("REM_device","REM_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("REM_device","REM_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+### LIGHT % {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+#### ORIGINAL DATA {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("LightPerc_device","LightPerc_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("LightPerc_device","LightPerc_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+#### LOG TRANSFORMED {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("LightPerc_device","LightPerc_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("LightPerc_device","LightPerc_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+### DEEP % {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+#### ORIGINAL DATA {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("DeepPerc_device","DeepPerc_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("DeepPerc_device","DeepPerc_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+#### LOG TRANSFORMED {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("DeepPerc_device","DeepPerc_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("DeepPerc_device","DeepPerc_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+### REM % {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+#### ORIGINAL DATA {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("REMPerc_device","REMPerc_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("REMPerc_device","REMPerc_ref"), logTransf = FALSE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+#### LOG TRANSFORMED {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+##### CLASSIC CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("REMPerc_device","REMPerc_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="classic", CI.level=.95)
+
+```
+
+<br>
+
+##### BOOTSTRAP CI
+
+<br>
+
+```{r }
+
+BAplot(data=sleep.data,measures=c("REMPerc_device","REMPerc_ref"), logTransf = TRUE,
+       xaxis="reference", CI.type="boot", boot.type = "basic", CI.level=.95)
+
+```
+
+<br>
+
+<br>
+<br>
+<br>
+
+# 3. Epoch-by-epoch analysis
+
+The third step implies the use of the epoch-by-epoch raw data to evaluate the device performance on an epoch-by-epoch basis as compared to the reference method.
+
+<br>
+
+## 3.1. Error matrices {.tabset .tabset-fade .tabset-pills}
+
+Here, we compute the error matrices (or confusion matrices) to describe the device performance in classifying reference-derived epoch-by-epoch stages (or sleep/wake), as described in the main article. The procedure generalizes to sleep stages by dichotomizing the scores for each stage (e.g., 1 = stage of interest, 0 = all other stages). This is done with the **errorMatrix.R** function, which allows to specify the following arguments:
+
+- *data*: data.frame including the raw data to be used, organized with the data structure shown in Section 1.
+
+- *idCol*, *RefCol* and *deviceCol*: character strings indicating the names of the columns for subjects, reference and device epochs, respectively.
+
+- *staging*: logical value indicating if the raw data includes sleep stages (wake, light, deep and REM) or not, FALSE assumes data consists of only wake/sleep distinction (default: TRUE).
+
+- *stages*: : numeric vector indicating the coding system used for wake, light, deep and REM sleep (in this order).. The default coding system is c(wake = 0, light = 1, deep = 2, REM = 3). Only wake and sleep should be indicated when staging = FALSE, e.g. c(wake = 0, sleep = 1).
+
+- *matrixType*: character string indicating the type of matrix to be generated: “prop” (default) for generating a group-level 'proportional error matrix', which reports the proportion of device-derived epochs in each condition over the number of reference-derived epochs in that condition, averaged between subjects, and presented as ’mean (sd) [CI]’ (requires the DescTools package for computing bootstrapped CI); “sum” for reporting the ‘absolute error matrix’, which reports the total number of epochs in each condition, without distinguishing between subjects.
+
+- *CI.type*: character string indicating the type of confidence intervals to be used: “classic” (default) returns intervals based on the t-distribution, “boot” returns intervals for means by bootstrap with 10000 replicates (see ?boot.ci). This argument is not considered when matrixType = "sum".
+
+- *CI.level*: confidence intervals to be computed on bias and LOAs (default: .95). This argument is not considered when matrixType = "sum".
+
+- *boot.type*: character string indicating the type of bootstrapped confidence intervals. The value should be one of “basic” (default), “norm”, “stud”, “perc”, or “bca” (see ?boot.ci for details). This argument is not considered when matrixType = "sum" or when CI.type = “classic”.
+
+- *boot.R*: numeric value indicating the number of boostrap replicates (default: 10,000). Higher values require more time for computing CI (see also *?boot*). This argument is not considered when metricsType = “sum” or when CI.type = “classic”.
+
+- *digits*: numeric value specifying the decimal precision for the output (default: 2).
+
+<br>
+
+<details><summary>Show function</summary>
+<p>
+
+```{r warning=FALSE,message=FALSE}
+
+errorMatrix <- function(data=NA,idCol="subject",RefCol="reference",deviceCol="device",
+                        staging=TRUE,stages=c(wake=0,light=1,deep=2,REM=3),matrixType="prop",
+                        CI.type="classic",CI.level=.95,boot.type="basic",boot.R=10000,digits=2){
+  
+  # renaming variables
+  colnames(data) <- gsub(idCol,"ID",colnames(data))
+  colnames(data) <- gsub(RefCol,"ref",colnames(data))
+  colnames(data) <- gsub(deviceCol,"device",colnames(data))
+  
+  # function to print error info as "mean (sd) [CI]"
+  printInfo <- function(condition){
+    m <- round(mean(errMatrix[,condition],na.rm=TRUE),digits)
+    s <- round(sd(errMatrix[,condition],na.rm=TRUE),digits)
+    if(CI.type=="classic"){ require(DescTools)
+      CI.up <- round(MeanCI(errMatrix[,condition],method="classic")[3],digits)
+      CI.lo <- round(MeanCI(errMatrix[,condition],method="classic")[2],digits)
+    } else if(CI.type=="boot"){ require(boot)
+      CI.lo <- round(boot.ci(boot(errMatrix[,condition],
+                                function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                             type=boot.type,conf=CI.level)[[4]][4],digits)
+      CI.up <- round(boot.ci(boot(errMatrix[,condition],
+                                function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                             type=boot.type,conf=CI.level)[[4]][5],digits)
+    } else { stop("Error: CI.type can be either 'classic' or 'boot'") }
+    if(CI.lo < 0) CI.lo = 0 # bounding at zero
+    paste(m," (",s,") [",CI.lo,", ",CI.up,"]",sep="") }
+  
+  # .................................
+  # sleep staging is available
+  # .................................
+  
+  if(staging==TRUE){
+    
+    # setting stages as 0 = wake, 1 = light, 2 = deep, 3 = REM
+    data$ref <- as.integer(as.character(factor(data$ref,levels=as.numeric(stages),labels=c(0,1,2,3))))
+    data$device <- as.integer(as.character(factor(data$device,levels=as.numeric(stages),labels=c(0,1,2,3))))
+    
+    # function to generate error matrix
+    generateMatrix <- function(data,matrixType){
+      # empty dataframe for error matrix
+      errMatrix <- as.data.frame(matrix(nrow=0,ncol=5))
+      for(i in 0:3){
+        # dividend based on matrix type
+        h <- ifelse(matrixType=="prop",nrow(data[data$ref==i,]),1)
+        # filling matrix with number (sum) or proportion (prop) of epochs in each condition
+        errMatrix <- rbind(errMatrix,
+                           data.frame(reference=names(stages)[i+1],
+                                      device_wake=nrow(data[data$device==0 & data$ref==i,])/h,
+                                      device_light=nrow(data[data$device==1 & data$ref==i,])/h,
+                                      device_deep=nrow(data[data$device==2 & data$ref==i,])/h,
+                                      device_REM=nrow(data[data$device==3 & data$ref==i,])/h,
+                                      reference_tot=nrow(data[data$ref==i,]))) }
+      return(rbind(errMatrix,
+                   # adding marginal sums
+                   data.frame(reference="device_tot",device_wake=nrow(data[data$device==0,]),
+                              device_light=nrow(data[data$device==1,]),device_deep=nrow(data[data$device==2,]),
+                              device_REM=nrow(data[data$device==3,]),reference_tot=nrow(data))))
+    }
+      
+    # generating absolute error matrix
+    if(matrixType=="sum"){ 
+      errMatrix <- generateMatrix(data,matrixType)
+      
+    # generating averaged percent error matrix 
+      } else if(matrixType=="prop"){
+        # empty dataframe for error matrix
+        errMatrix <- as.data.frame(matrix(nrow=0,ncol=17))
+        # on matrix per subject (in wide form)
+        for(ID in levels(as.factor(data$ID))){
+          errMatrix <- rbind(errMatrix,
+                             reshape(data=cbind(ID=rep(ID,length(stages)),
+                                                generateMatrix(data[data$ID==ID,],matrixType)[1:4,1:5]),
+                                     idvar="ID",v.names=paste("device",c("wake","light","deep","REM"),sep="_"),
+                                     timevar="reference",direction="wide")) }
+        
+        # using printInfo for reporting mean, sd, and CI
+        errMatrix <- data.frame(reference=c("wake","light","deep","REM"),
+                                device_wake=unlist(lapply(colnames(errMatrix)[substr(colnames(errMatrix),
+                                                                                     8,10)=="wak"],printInfo)),
+                                device_light=unlist(lapply(colnames(errMatrix)[substr(colnames(errMatrix),
+                                                                                      8,10)=="lig"],printInfo)),
+                                device_deep=unlist(lapply(colnames(errMatrix)[substr(colnames(errMatrix),
+                                                                                     8,10)=="dee"],printInfo)),
+                                device_REM=unlist(lapply(colnames(errMatrix)[substr(colnames(errMatrix),
+                                                                                    8,10)=="REM"],printInfo)))
+        
+        } else { stop("Error: matrixType argument can be either 'prop' or 'sum'") }
+    
+  # .................................
+  # sleep staging is *not* available
+  # .................................
+    
+  } else {
+    
+    # setting stages
+    data$ref <- as.integer(as.character(factor(data$ref,levels=as.numeric(stages),labels=c(0,1))))
+    data$device <- as.integer(as.character(factor(data$device,levels=as.numeric(stages),labels=c(0,1))))
+    
+    # function to generate error matrix
+    generateMatrix <- function(data,matrixType){
+      # empty dataframe for error matrix
+      errMatrix <- as.data.frame(matrix(nrow=0,ncol=3))
+      for(i in 0:1){
+        # dividend based on matrix type
+        h <- ifelse(matrixType=="perc",nrow(data[data$ref==i,]),1)
+        # filling matrix with number (sum) or percentage (perc) of epochs in each condition
+        errMatrix <- rbind(errMatrix,
+                           data.frame(reference=names(stages)[i+1],
+                                      device_wake=nrow(data[data$device==0 & data$ref==i,])/h,
+                                      device_sleep=nrow(data[data$device==1 & data$ref==i,])/h,
+                                      reference_tot=nrow(data[data$ref==i,]))) }
+      return(rbind(errMatrix,
+                   # adding marginal sums
+                   data.frame(reference="device_tot",device_wake=nrow(data[data$device==0,]),
+                              device_sleep=nrow(data[data$device==1,]),reference_tot=nrow(data))))
+    }
+    
+    # generating absolute error matrix
+    if(matrixType=="sum"){
+      errMatrix <- generateMatrix(data,matrixType)
+      
+    # generating averaged error matrix 
+      } else if(matrixType=="prop"){
+        errMatrix <- as.data.frame(matrix(nrow=0,ncol=5))
+        for(ID in levels(as.factor(data$ID))){
+          errMatrix <- rbind(errMatrix,
+                             reshape(data=cbind(ID=rep(ID,length(stages)),
+                                                generateMatrix(data[data$ID==ID,],matrixType)[1:2,1:3]),
+                                     idvar="ID",v.names=paste("device",c("wake","sleep"),sep="_"),
+                                     timevar="reference",direction="wide"))
+        }
+        
+        errMatrix <- data.frame(reference=c("wake","sleep"),
+                                device_wake=unlist(lapply(colnames(errMatrix)[substr(colnames(errMatrix),
+                                                                                      8,10)=="wak"],printInfo)),
+                                device_sleep=unlist(lapply(colnames(errMatrix)[substr(colnames(errMatrix),
+                                                                                     8,10)=="sle"],printInfo)))
+        
+        } else { cat('Error: matrixType argument can be either "sum" or "prop"')}
+    
+  }
+  
+  return(errMatrix)
+  
+}
+
+```
+
+</p>
+</details>
+
+<br>
+
+### SLEEP STAGING
+
+<br>
+
+Here, we use the function to generate the error matrix by assuming that sleep staging is allowed by the device. The *matrixType* argument is set as "prop" to generate the 'proportional error matrix', reporting the group average proportion of epochs in each condition.
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+errorMatrix(data = raw.data, idCol = "subject", RefCol = "reference", deviceCol = "device",
+            staging = TRUE, stages = c(wake = 0, light = 1, deep = 2, REM = 3), matrixType="prop",
+            CI.type = "boot", boot.type = "basic", boot.R = 10000, CI.level = .95, digits = 2)
+
+```
+
+<br>
+
+Alternatively, the *matrixType* argument is set as "sum" to generate the 'absolute error matrix', where the number of epochs in each condition is reported.
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+errorMatrix(data = raw.data, idCol = "subject", RefCol = "reference", deviceCol = "device",
+            staging = TRUE, stages = c(wake = 0, light = 1, deep = 2, REM = 3), matrixType="sum",
+            CI.type = "classic", CI.level = .95, digits = 2)
+
+```
+
+<br>
+
+### SLEEP/WAKE
+
+<br>
+
+Here, we use the function to generate the error matrix by assuming that only sleep/wake patterns (and not sleep staging) are allowed by the device. This is done by using the dichotomic dataset we created in Section 1. The *matrixType* argument is set as "prop" to report the group average proportion of epochs in each condition.
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+errorMatrix(data = dic.data, idCol = "subject", RefCol = "reference", deviceCol = "device",
+            staging = FALSE, stages = c(wake = 10, sleep = 5), matrixType = "prop",
+            CI.type = "classic", boot.type = "basic", CI.level = .95, digits = 2)
+
+```
+
+<br>
+
+Alternatively, the *matrixType* argument is set as "sum" to generate the absolute error matrix, where the sum of epochs in each condition is reported.
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+errorMatrix(data = dic.data, idCol = "subject", RefCol = "reference", deviceCol = "device",
+            staging = FALSE, stages = c(wake = 10, sleep = 5), matrixType = "sum",
+            CI.type = "classic", boot.type = "basic", CI.level = .95, digits = 2)
+
+```
+
+<br>
+
+## 3.2. Individual-level EBE metrics {.tabset .tabset-fade .tabset-pills}
+
+Here, we compute the basic EBE metrics (i.e., accuracy, sensitivity, specificity) for each subject and for each stage of interest, as described in the main article. Outcomes can be also plotted to visually check for distribution and extreme values. This is done with the **indEBE.R** function:
+
+- *data*: data.frame including the raw data to be used, organized with the data structure shown in Section 1.
+
+- *idCol*, *RefCol* and *deviceCol*: character strings indicating the names of the columns for subjects, reference and device epochs, respectively.
+
+- *stage*: numeric value corresponding to the stage of interest (default: 0).
+
+- *stageLabel*: character string indicating the label corresponding to the stage of interest (default: "wake").
+
+- *doPlot*: logical value indicating if the data should be plotted (default: TRUE, requires the *ggplot2* and the *reshape2* package).
+
+- *digits*: numeric value specifying the decimal precision for the output (default: 2).
+
+<br>
+
+<details><summary>Show function</summary>
+<p>
+
+```{r warning=FALSE,message=FALSE}
+
+indEBE <- function(data=NA,idCol="subject",RefCol="reference",deviceCol="device",doPlot=TRUE,
+                            stage=0,stageLabel="wake",digits=2){
+  
+  # renaming variables
+  colnames(data) <- gsub(idCol,"ID",colnames(data))
+  colnames(data) <- gsub(RefCol,"ref",colnames(data))
+  colnames(data) <- gsub(deviceCol,"device",colnames(data))
+  
+  # empty dataframe to be filled
+  results <- as.data.frame(matrix(nrow=0,ncol=4))
+  
+  for(ID in levels(as.factor(data$ID))){
+    
+    d <- data[data$ID==ID,]
+    
+    # .....................
+    # DYCHOTOMIC ENCODING
+    # .....................
+    
+    # reference dychotomous recoding
+    d$reference_EBE <- NA
+    d[d$ref!=stage,"reference_EBE"] = 0 # other stages = 0
+    d[d$ref==stage,"reference_EBE"] = 1 # target stage = 1
+    
+    # device dychotomous recoding
+    d$device_EBE = NA
+    d[d$device==stage,"device_EBE"] = 1 # target stage = 1
+    d[d$device!=stage,"device_EBE"] = 0 # other stages = 0
+    
+    # ...................
+    # CONFUSION MATRIX
+    # ...................
+    
+    errMatrix <- data.frame(device=c("positive","negative"),
+                            ref_positive=c(nrow(d[d$device_EBE==1 & d$reference_EBE==1,]), # true wake
+                                           nrow(d[d$device_EBE==0 & d$reference_EBE==1,])), # false sleep
+                            ref_negative=c(nrow(d[d$device_EBE==1 & d$reference_EBE==0,]), # false wake
+                                           nrow(d[d$device_EBE==0 & d$reference_EBE==0,]))) # true sleep
+    
+    # ..............
+    # EBE MEASURES
+    # ..............
+    
+    results <- rbind(results,
+                     data.frame(subject=ID,
+                                
+                                # accuracy
+                                acc=round(100*(errMatrix[1,2]+errMatrix[2,3])/
+                                            (errMatrix[1,2]+errMatrix[2,2]+errMatrix[1,3]+errMatrix[2,3]),digits),
+                                
+                                # sensitivity
+                                sens=round(100*errMatrix[1,2]/(errMatrix[1,2]+errMatrix[2,2]),digits),
+                                
+                                # specificity
+                                spec=round(100*errMatrix[2,3]/(errMatrix[2,3]+errMatrix[1,3]),digits))) }
+  
+  # ..............
+  # PLOTTING RESULTS
+  # ..............
+  
+  if(doPlot==TRUE){
+    
+    require(ggplot2)
+    require(reshape2)
+    
+    melted.results <- melt(results)
+    p <- ggplot(data=melted.results,aes(x=variable,y=subject,fill=value)) +
+      geom_tile() +
+      scale_fill_gradient2(low="#f03b20",high="lightgreen",mid="yellow",
+                           limit = c(0,100),midpoint = 50,
+                           space = "Lab",
+                           name="% discrepancy",
+                           guide="legend",
+                           breaks=round(seq(100,0,length.out = 11),2),
+                           minor_breaks=round(seq(100,0,length.out = 11),2)) +
+      geom_text(data=melted.results,aes(x=variable,y=subject,label=value),color="black",size=3) +
+      ggtitle(paste("Epoch-by-epoch statistics by subject for",stageLabel)) +
+      theme(panel.background = element_blank())
+    
+    colnames(results)[2:4] <- paste(stageLabel,c("acc","sens","spec")) 
+    
+    return(list(results,p))
+    
+  } else { 
+    
+    colnames(results)[2:4] <- paste(stageLabel,c("acc","sens","spec")) 
+    return(results) 
+    
+    }
+  
+}
+
+```
+
+</p>
+</details>
+
+<br>
+
+### SLEEP STAGING
+
+<br>
+
+Here, we use the function to generate individual EBE metrics for each considered stage, by assuming that sleep staging is allowed by the device. The *cbind* function is used to concatenate the information on each stage in a single output.
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+(ebe <- cbind(indEBE(data = raw.data, stage = 0, stageLabel = "wake", doPlot = FALSE, digits = 2),
+              indEBE(data = raw.data, stage = 1, stageLabel = "light", doPlot = FALSE, digits = 2)[,2:4],
+              indEBE(data = raw.data, stage = 2, stageLabel = "deep", doPlot = FALSE, digits = 2)[,2:4],
+              indEBE(data = raw.data, stage = 3, stageLabel = "REM", doPlot = FALSE, digits = 2)[,2:4]))
+
+```
+
+<br>
+
+### SLEEP/WAKE
+
+<br>
+
+Here, we use the function to generate individual accuracy metrics for sleep and wake detection, by assuming that only sleep/wake patterns (and not sleep staging) are allowed by the device. Note that only sleep-related metrics (and not wake-related metrics) are reported, since with binary data the metrics for a given category mirror those of the other category (i.e., wake sensitivity is sleep specificity and vice versa, whereas accuracy is the same for both categories).
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+(ebe.dic <- indEBE(data = dic.data, stage = 5, stageLabel = "sleep", doPlot = FALSE, digits = 2))
+
+```
+
+<br>
+
+## 3.2.1. Data visualization {.tabset .tabset-fade .tabset-pills}
+
+Here, we show how the output can be used to generate boxplots of sensitivity levels in each stage (the same applies to specificity or accuracy by substituting “sens” with “spec” or “acc”, respectively). Then, we set *doPlot = TRUE* to plot the results for each accuracy metric (using a table format).
+
+<br>
+
+### SLEEP STAGING {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+Here, boxplots are generated by assuming that sleep staging is allowed by the device.
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+library(reshape2); library(ggplot2)
+
+indEBE_melt <- melt(ebe[, c("subject", colnames(ebe)[grepl("sens", colnames(ebe)) == TRUE])])
+indEBE_melt$variable <- as.factor(gsub(" sens","",indEBE_melt$variable))
+ggplot(indEBE_melt,aes(x = variable, y = value, fill = variable)) + xlab("stage") + ylab("sensitivity (%)") + 
+  geom_boxplot(size=1.5, outlier.shape = NA, alpha = .5, width = .5, colour = "black") +
+  geom_point(aes(col=variable),position = position_jitter(width = .15), size = 2) + 
+  theme(legend.position = "none")
+
+```
+
+<br>
+
+Here, we use the function by setting *doPlot* = TRUE to plot the results for each EBE metric (using a table format). Green colors indicate higher individual accuracy, whereas red colors indicate lower individual accuracy.
+
+<br>
+
+#### WAKE
+
+<br>
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+indEBE(data = raw.data, stage = 0, stageLabel = "wake", doPlot = TRUE, digits = 2)[2]
+
+```
+
+<br>
+
+#### LIGHT SLEEP
+
+<br>
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+indEBE(data = raw.data, stage = 1, stageLabel = "light", doPlot = TRUE, digits = 2)[2]
+
+```
+
+<br>
+
+#### DEEP SLEEP
+
+<br>
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+indEBE(data = raw.data, stage = 2, stageLabel = "deep", doPlot = TRUE, digits = 2)[2]
+
+```
+
+<br>
+
+#### REM SLEEP
+
+<br>
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+indEBE(data = raw.data, stage = 3, stageLabel = "REM", doPlot = TRUE, digits = 2)[2]
+
+```
+
+<br>
+
+### SLEEP/WAKE {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+Here, boxplots are generated by assuming that only sleep/wake patterns (and not sleep staging) are allowed by the device. Note that with binary data the sensitivity in detecting one category (e.g., wake) corresponds to the specificity in detecting the other category (e.g., sleep).
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+library(reshape2); library(ggplot2)
+
+ebe.dic <- cbind(indEBE(data = dic.data, stage = 5, stageLabel = "sleep", doPlot = FALSE, digits = 2),
+                 indEBE(data = dic.data, stage = 10, stageLabel = "wake", doPlot = FALSE, digits = 2))
+
+indEBE_melt <- melt(ebe.dic[, c("subject",colnames(ebe.dic)[grepl("sens", colnames(ebe.dic)) == TRUE])])
+indEBE_melt$variable <- as.factor(gsub(" sens","",indEBE_melt$variable))
+ggplot(indEBE_melt,aes(x = variable, y = value, fill = variable)) + ylab("sensitivity (%)") + 
+  geom_boxplot(size=1.5, outlier.shape = NA, alpha = .5, width = .5, colour = "black") +
+  geom_point(aes(col=variable),position = position_jitter(width = .15), size = 2) + 
+  theme(legend.position = "none")
+
+```
+
+<br>
+
+Here, we use the function by setting *doPlot* = TRUE to plot the results for each EBE metric (using a table format). Green colors indicate higher individual accuracy, whereas red colors indicate lower individual accuracy. Note that only sleep-related metrics (and not wake-related metrics) are reported, since with binary data the metrics for a given category mirror those of the other category (i.e., wake sensitivity is sleep specificity and vice versa, whereas accuracy is the same for both categories).
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+indEBE(data = dic.data, stage = 5, stageLabel = "sleep", doPlot = TRUE, digits = 2)[2]
+
+```
+
+<br>
+
+## 3.3. Group-level EBE metrics  {.tabset .tabset-fade .tabset-pills}
+
+Here, we compute the group-level basic (i.e., accuracy, sensitivity, specificity) and advanced EBE metrics (e.g., positive predictive value, Cohen's kappa)  for each stage of interest, as described in the main article . Outcomes can be also plotted to visually check for distribution and extreme values. This is done with the **groupEBE.R** function, which allows to specify the following arguments:
+
+- *data*: data.frame including the raw data to be used, organized with the data structure shown in Section 1.
+
+- *idCol*, *RefCol* and *deviceCol*: characters indicating the names of the columns for subjects, reference and device epochs, respectively.
+
+- *stage*: numeric value corresponding to the stage of interest (default: 0).
+
+- *stageLabel*: label indicating the stage of interest (default: "wake").
+
+- *metricsType*: character string indicating the type of metrics to be generated: "avg" (defaut) for reporting individual EBE metrics averaged between subjects, and presented as "mean (sd) [CI]" (requires the *DescTools* package for computing CI), "sum" for reporting EBE metrics based on the absolute error matrix (i.e., using the total sum of epochs in each condition, without distinguishing between subjects).
+
+- *CI.type*: character string indicating the type of confidence intervals to be used: “classic” (default) returns intervals based on the t-distribution, “boot” returns intervals for means by bootstrap with 10000 replicates (see ?boot.ci). This argument is not considered when metricsType = “sum”.
+
+- *CI.level*: confidence intervals to be computed on bias and LOAs (default: .95). This argument is not considered when metricsType = “sum”.
+
+- *boot.type*: character string indicating the type of bootstrapped confidence intervals. The value should be one of “basic” (default), “norm”, “stud”, “perc”, or “bca” (see ?boot.ci for details). This argument is not considered when metricsType = “sum” or when CI.type = “classic”.
+
+- *boot.R*: numeric value indicating the number of boostrap replicates (default: 10,000). Higher values require more time for computing CI (see also *?boot*). This argument is not considered when metricsType = “sum” or when CI.type = “classic”.
+
+- *advancedMetrics*: logical value indicating wether additional epoch-by-epoch metrics (i.e., PPV, NPV, kappa, PABAK, bias, and prevalence index) should be reported (default=FALSE, requires to install the *epiR* package).
+
+- *doROC*: logical value indicating wether the receiver operating characteristics (ROC) curves should be plotted (default: FALSE, if TRUE requires to install the *ROCR* package).
+
+- *digits*: numeric value specifying the decimal precision for the output (default: 2).
+
+<br>
+
+<details><summary>Show function</summary>
+<p>
+
+```{r warning=FALSE,message=FALSE}
+
+groupEBE <- function(data=NA,idCol="subject",RefCol="reference",deviceCol="device",
+                     stage=0,stageLabel="wake",metricsType="avg",CI.type="classic",CI.level=.95,boot.type="basic",boot.R=10000,
+                     advancedMetrics=FALSE,doROC=FALSE,digits=2){
+  
+  # renaming variables
+  colnames(data) <- gsub(idCol,"ID",colnames(data))
+  colnames(data) <- gsub(RefCol,"ref",colnames(data))
+  colnames(data) <- gsub(deviceCol,"device",colnames(data))
+  
+  # ............................
+  # DYCHOTOMIC RECODING
+  # ............................
+    
+  # reference dychotomous recoding
+  data$ref_EBE <- NA
+  data[data$ref!=stage,"ref_EBE"] = 0 # other stages = 0
+  data[data$ref==stage,"ref_EBE"] = 1 # target stage = 1
+    
+  # device dychotomous recoding
+  data$device_EBE = NA
+  data[data$device==stage,"device_EBE"] = 1 # target stage = 1
+  data[data$device!=stage,"device_EBE"] = 0 # other stages = 0
+  
+  generateAccMetrics <- function(data,advancedMetrics){
+    
+    # ............................
+    # CONFUSION MATRIX
+    # ............................
+    
+    errMatrix <- data.frame(device=c("positive","negative"),
+                            ref_positive=c(nrow(data[data$device_EBE==1 & data$ref_EBE==1,]), # true wake
+                                           nrow(data[data$device_EBE==0 & data$ref_EBE==1,])), # false sleep
+                            ref_negative=c(nrow(data[data$device_EBE==1 & data$ref_EBE==0,]), # false wake
+                                           nrow(data[data$device_EBE==0 & data$ref_EBE==0,]))) # true sleep
+    
+    # ............................
+    # BASIC EBE METRICS
+    # ............................
+    
+    # accuracy
+    accuracy <- round(100*(errMatrix[1,2]+errMatrix[2,3])/
+                        (errMatrix[1,2]+errMatrix[2,2]+errMatrix[1,3]+errMatrix[2,3]),digits)
+    # sensitivity
+    sensitivity <- round(100*errMatrix[1,2]/(errMatrix[1,2]+errMatrix[2,2]),digits)
+    # specificity
+    specificity <- round(100*errMatrix[2,3]/(errMatrix[2,3]+errMatrix[1,3]),digits)
+    
+    # ............................
+    # ADDITIONAL EBE METRICS
+    # ............................
+    
+    if(advancedMetrics==TRUE){
+      
+      require(epiR)
+    
+      # prevalence
+      prevalence <- round(100*(errMatrix[1,2]+errMatrix[2,2])/
+                            (errMatrix[1,2]+errMatrix[2,2]+errMatrix[1,3]+errMatrix[2,3]),2)
+      # positive predictive value
+      ppv <- round(100*(sensitivity*prevalence)/
+                     (sensitivity*prevalence + (1-specificity)*(1-prevalence)),digits)
+      # negative predictive value
+      npv <- round(100*(specificity*(1-prevalence))/
+                     ((1-specificity)*prevalence + specificity*(1-prevalence)),digits)
+      # Cohen's kappa
+      kappa <- round(epi.kappa(as.table(as.matrix(errMatrix[1:2,2:3])))$kappa$est,digits)
+      # PABAK
+      pabak <- round(epi.kappa(as.table(as.matrix(errMatrix[1:2,2:3])))$pabak$est,digits)
+      # bias index
+      bindex <- round(epi.kappa(as.table(as.matrix(errMatrix[1:2,2:3])))$bindex$est,digits)
+      # prevalence index
+      pindex <- round(epi.kappa(as.table(as.matrix(errMatrix[1:2,2:3])))$pindex$est,digits)
+      
+      # creating dataframe with basic and advanced metrics
+      results <- data.frame(stage=stageLabel,
+                            accuracy=accuracy,sensitivity=sensitivity,specificity=specificity,
+                            ppv=ppv,npv=npv,kappa=kappa,pabak=pabak,pindex=pindex)
+      
+      } else { # only basic metrics
+        results <- data.frame(stage=stageLabel,
+                            accuracy=accuracy,sensitivity=sensitivity,specificity=specificity) } 
+    
+    return(results)
+  }
+  
+  # generating metrics from absolute error matrix
+  if(metricsType=="sum"){ 
+    results <- generateAccMetrics(data,advancedMetrics)
+      
+  # generating metrics from averaged error matrix    
+  } else if(metricsType=="avg"){
+    # empty dataframe to be filled with individual EBE metrics
+    results <- as.data.frame(matrix(nrow=0,ncol=ncol(generateAccMetrics(data,advancedMetrics))))
+    for(ID in levels(as.factor(data$ID))){
+      results <- rbind(results,
+                       data.frame(ID,generateAccMetrics(data[data$ID==ID,],advancedMetrics))) 
+      }
+    
+    # function to print EBE metrics info as "mean (sd) [CI]"
+    printInfo <- function(results,metric){
+      require(DescTools)
+      m <- round(mean(results[,metric],na.rm=TRUE),digits)
+      s <- round(sd(results[,metric],na.rm=TRUE),digits)
+      if(CI.type=="classic"){ require(DescTools)
+        CI.lo <- round(MeanCI(results[,metric],method=CI.type,btype=boot.type,R=boot.R)[2],digits)
+        CI.up <- round(MeanCI(results[,metric],method=CI.type,btype=boot.type,R=boot.R)[3],digits)
+      } else if (CI.type=="boot"){ library(boot)
+      CI.lo <- round(boot.ci(boot(results[,metric],
+                                  function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                             type=boot.type,conf=CI.level)[[4]][4],digits)
+      CI.up <- round(boot.ci(boot(results[,metric],
+                                function(dat,idx)mean(dat[idx],na.rm=TRUE),R=boot.R),
+                             type=boot.type,conf=CI.level)[[4]][5],digits)
+      } else { stop("Error: CI.type can be either 'classic' or 'boot'") }
+    paste(m," (",s,") [",CI.lo,", ",CI.up,"]",sep="") }
+    
+    # creating and filling data.frame of EBE metrics information
+    out <- as.data.frame(matrix(nrow=0,ncol=ncol(results)-2))
+    for(i in 1:ncol(out)){ out[1,i] <- printInfo(results,colnames(results)[i+2]) } 
+    colnames(out) <- colnames(results)[3:ncol(results)]
+    results <- cbind(stage=stageLabel,out)
+    
+  } else { stop("Error: metricsType argument can be either 'avg' or 'sum'") }
+  
+  # ROC curves
+  if(doROC==TRUE){
+    
+    require(ROCR)
+    p <- plot(performance(prediction(data$device_EBE,data$ref_EBE),"tpr","fpr"),lwd=2,
+              main=paste(stageLabel,"- ROC curves"),xlab="1-specificity",ylab="sensitivity")
+    abline(0,1,col="darkgray")
+    res <- list(results,p)
+  }
+  
+  return(results)
+  
+}
+
+```
+
+</p>
+</details>
+
+<br>
+
+### SLEEP STAGING {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+#### BASIC
+
+<br>
+
+Here, we use the function to generate the basic EBE metrics by assuming that sleep staging is allowed by the device. The *metricsType* argument is set as “avg” to report individual EBE metrics averaged between subjects. The *rbind* function is used to concatenate the information on each stage in a single output. Some arguments are omitted since default settings are used for each stage.
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+rbind(groupEBE(data=raw.data,stage=0,stageLabel="wake",metricsType="avg",CI.type="boot",advancedMetrics=FALSE),
+      groupEBE(data=raw.data,stage=1,stageLabel="light",metricsType="avg",CI.type="boot",advancedMetrics=FALSE),
+      groupEBE(data=raw.data,stage=2,stageLabel="deep",metricsType="avg",CI.type="boot",advancedMetrics=FALSE),
+      groupEBE(data=raw.data,stage=3,stageLabel="REM",metricsType="avg",CI.type="boot",advancedMetrics=FALSE))
+
+```
+
+<br>
+
+Alternatively, the *metricsType* argument can be set as “sum” to report EBE metrics based on the absolute error matrix (i.e., using the total sum of epochs in each condition, without distinguishing between subjects).
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+rbind(groupEBE(data=raw.data,stage=0,stageLabel="wake",metricsType="sum",advancedMetrics=FALSE),
+      groupEBE(data=raw.data,stage=1,stageLabel="light",metricsType="sum",advancedMetrics=FALSE),
+      groupEBE(data=raw.data,stage=2,stageLabel="deep",metricsType="sum",advancedMetrics=FALSE),
+      groupEBE(data=raw.data,stage=3,stageLabel="REM",metricsType="sum",advancedMetrics=FALSE))
+
+```
+
+<br>
+
+#### ADVANCED
+
+<br>
+
+Here, we use the function to generate both the basic and the additional accuracy metrics (see the main article) by assuming that sleep staging is allowed by the device. The *metricsType* argument is set as “avg” to report individual EBE metrics averaged between subjects. The *rbind* function is used to concatenate the information on each stage in a single output. Some arguments are omitted since default settings are used for each stage.
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+rbind(groupEBE(data=raw.data,stage=0,stageLabel="wake",metricsType="avg",CI.type="boot",advancedMetrics=TRUE),
+      groupEBE(data=raw.data,stage=1,stageLabel="light",metricsType="avg",CI.type="boot",advancedMetrics=TRUE),
+      groupEBE(data=raw.data,stage=2,stageLabel="deep",metricsType="avg",CI.type="boot",advancedMetrics=TRUE),
+      groupEBE(data=raw.data,stage=3,stageLabel="REM",metricsType="avg",CI.type="boot",advancedMetrics=TRUE))
+
+```
+
+<br>
+
+Alternatively, the *metricsType* argument can be set as “sum” to report EBE metrics based on the absolute error matrix (i.e., using the total sum of epochs in each condition, without distinguishing between subjects).
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+rbind(groupEBE(data=raw.data,stage=0,stageLabel="wake",metricsType="sum",advancedMetrics=TRUE),
+      groupEBE(data=raw.data,stage=1,stageLabel="light",metricsType="sum",advancedMetrics=TRUE),
+      groupEBE(data=raw.data,stage=2,stageLabel="deep",metricsType="sum",advancedMetrics=TRUE),
+      groupEBE(data=raw.data,stage=3,stageLabel="REM",metricsType="sum",advancedMetrics=TRUE))
+
+```
+
+
+<br>
+
+### SLEEP/WAKE {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+#### BASIC
+
+<br>
+
+Here, we use the function to generate the basic EBE metrics by assuming that only sleep/wake patterns (and not sleep staging) are allowed by the device (note that in this case wake and sleep information are symmetrical). The *metricsType* argument is set as “avg” to report individual EBE metrics averaged between subjects. The *rbind* function is used to concatenate the information on each stage in a single output. Some arguments are omitted since default settings are used for each stage. Note that only sleep-related metrics (and not wake-related metrics) are reported, since with binary data the metrics for a given category mirror those of the other category (i.e., wake sensitivity is sleep specificity and vice versa, whereas accuracy is the same for both categories).
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+groupEBE(data=dic.data,stage=10,stageLabel="wake",metricsType="avg",CI.type="boot",advancedMetrics=FALSE)
+
+```
+
+<br>
+
+Alternatively, the *metricsType* argument can be set as “sum” to report EBE metrics based on the absolute error matrix (i.e., using the total sum of epochs in each condition, without distinguishing between subjects).
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+groupEBE(data=dic.data,stage=10,stageLabel="wake",metricsType="sum",advancedMetrics=FALSE)
+
+```
+
+<br>
+
+#### ADVANCED
+
+<br>
+
+Here, we use the function to generate both the basic and the "advanced" EBE metrics by assuming that only sleep/wake patterns (and not sleep staging) are allowed by the device (note that in this case wake and sleep information are symmetrical). The *metricsType* argument is set as “avg” to report individual EBE metrics averaged between subjects. The *rbind* function is used to concatenate the information on each stage in a single output. Some arguments are omitted since default settings are used for each stage. Note that only sleep-related metrics (and not wake-related metrics) are reported, since with binary data the metrics for a given category mirror those of the other category (i.e., wake sensitivity is sleep specificity and vice versa, whereas accuracy is the same for both categories).
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+groupEBE(data=dic.data,stage=10,stageLabel="wake",metricsType="avg",CI.type="boot",advancedMetrics=FALSE)
+
+```
+
+<br>
+
+Alternatively, the *metricsType* argument can be set as “sum” to report EBE metrics based on the absolute error matrix (i.e., using the total sum of epochs in each condition, without distinguishing between subjects).
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+groupEBE(data=dic.data,stage=10,stageLabel="wake",metricsType="sum",advancedMetrics=FALSE)
+
+```
+
+<br>
+
+## 3.3.1. Data visualization {.tabset .tabset-fade .tabset-pills}
+
+Here, we use the function by setting *doROC* = TRUE to plot the ROC curves for each stage. Some arguments are omitted since default settings are used for each stage.
+
+<br>
+
+### SLEEP STAGING {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+Here, the function is applied by assuming that sleep staging is allowed by the device.
+
+<br>
+
+#### WAKE
+
+<br>
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+groupEBE(data = raw.data, stage = 0, stageLabel = "wake", metricsType = "sum", doROC = TRUE)[[2]]
+
+```
+
+<br>
+
+#### LIGHT SLEEP
+
+<br>
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+groupEBE(data = raw.data, stage = 1, stageLabel = "light", metricsType = "sum", doROC = TRUE)[[2]]
+
+```
+
+<br>
+
+#### DEEP SLEEP
+
+<br>
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+groupEBE(data = raw.data, stage = 2, stageLabel = "deep", metricsType = "sum", doROC = TRUE)[[2]]
+
+```
+
+<br>
+
+#### REM SLEEP
+
+<br>
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+groupEBE(data = raw.data, stage = 3, stageLabel = "REM", metricsType = "sum", doROC = TRUE)[[2]]
+
+```
+
+<br>
+
+### SLEEP/WAKE {.tabset .tabset-fade .tabset-pills}
+
+<br>
+
+Here, the function is applied by assuming that only sleep/wake patterns (and not sleep staging) are allowed by the device (note that in this case wake and sleep information are symmetrical).
+
+<br>
+
+#### WAKE
+
+<br>
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+groupEBE(data = dic.data, stage = 10, stageLabel = "wake", metricsType = "sum", doROC = TRUE)[[2]]
+
+```
+
+<br>
+
+#### SLEEP
+
+<br>
+
+```{r warning=FALSE,message=FALSE,out.width='60%'}
+
+groupEBE(data = dic.data, stage = 5, stageLabel = "sleep", metricsType = "sum", doROC = TRUE)[[2]]
+
+```
+
+<br>
+
+<br>
+
+# References
+
+<br>
+
+Bland, J. M., & Altman, D. G. (1999). Measuring agreement in method comparison studies. *Statistical Methods in Medical Research, 8*(2), 135–160. https://doi.org/10.1177/096228029900800204
+
+Depner, C. M., Cheng, P. C., Devine, J. K., Khosla, S., de Zambotti, M., Robillard, R., Vakulin, A., & Drummond, S. P. A. (2019). Wearable Technologies for Developing Sleep and Circadian Biomarkers: A Summary of Workshop Discussions. Sleep. https://doi.org/10.1093/sleep/zsz254
+
+de Zambotti, M., Cellini, N., Goldstone, A., Colrain, I. M., & Baker, F. C. (2019). Wearable Sleep Technology in Clinical and Research Settings. *Medicine & Science in Sports & Exercise, 51*(7), 1538–1557. https://doi.org/10.1249/MSS.0000000000001947
+
+Euser, A. M., Dekker, F. W., & le Cessie, S. (2008). A practical approach to Bland-Altman plots and variation coefficients for log transformed variables. *Journal of Clinical Epidemiology, 61*(10), 978–982. https://doi.org/10.1016/j.jclinepi.2007.11.003
+
+<br>
+
+## Required packages
+
+<br>
+
+Attali, D., & Baker, C. (2019). ggExtra: Add Marginal Histograms to 'ggplot2', and More 'ggplot2' Enhancements. R package version 0.9. <br> https://cran.r-project.org/web/packages/ggExtra
+
+Canty, A., & Ripley, B. (2019). boot: Bootstrap R (S-Plus) Functions. R package version 1.3-23. https://cran.r-project.org/web/packages/boot
+
+Wickham, H. (2007). Reshaping Data with the reshape Package. *Journal of Statistical Software, 21*(12), 1-20. <br> https://cran.r-project.org/web/packages/reshape2
+
+Lehnert, B. (2015). BlandAltmanLeh: Plots (Slightly Extended) Bland-Altman Plots. R package version 0.3.1. <br> https://cran.r-project.org/web/packages/BlandAltmanLeh
+
+Signorell, A. et al. (2020). DescTools: Tools for descriptive statistics. R package version 0.99.32. <br> https://cran.r-project.org/web/packages/DescTools
+
+Sing T., Sander O, Beerenwinkel, N., & Lengauer, T. (2005). ROCR: visualizing classifier performance in R. *Bioinformatics, 21*(20), 3940-3941. <br> https://cran.r-project.org/web/packages/ROCR
+
+Stevenson, M., Nunes, T., Heuer, C., ..., & Reynard, C. (2019). epiR: Tools for the Analysis of Epidemiological Data. R package version 1.0-10. <br> https://cran.r-project.org/web/packages/epiR
+
+Wickham, H. (2016). *ggplot2: Elegant Graphics for Data Analysis*. New York: Springer-Verlag. R package version 3.2.1. <br> https://cran.r-project.org/web/packages/ggplot2/index.html
+
+<br>
