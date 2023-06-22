@@ -108,7 +108,7 @@ errorMatrix <- function(data=NA,idCol="subject",RefCol="reference",deviceCol="de
                            data.frame(reference=names(stages)[i+1],
                                       device_wake=nrow(data[data$device==0 & data$ref==i,])/h,
                                       device_sleep=nrow(data[data$device==1 & data$ref==i,])/h,
-                                      reference_tot=nrow(data[data$ref==i,]))) }
+                                      reference_tot=nrow(data[data$ref==i,])/h)) }
       return(rbind(errMatrix,
                    # adding marginal sums
                    data.frame(reference="device_tot",device_wake=nrow(data[data$device==0,]),
