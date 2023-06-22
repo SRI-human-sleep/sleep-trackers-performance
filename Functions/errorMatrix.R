@@ -61,7 +61,7 @@ errorMatrix <- function(data=NA,idCol="subject",RefCol="reference",deviceCol="de
     if(matrixType=="sum"){ 
       errMatrix <- generateMatrix(data,matrixType)
       
-      # generating averaged percent error matrix 
+      # generating averaged proportional error matrix 
     } else if(matrixType=="prop"){
       # empty dataframe for error matrix
       errMatrix <- as.data.frame(matrix(nrow=0,ncol=17))
@@ -102,13 +102,13 @@ errorMatrix <- function(data=NA,idCol="subject",RefCol="reference",deviceCol="de
       errMatrix <- as.data.frame(matrix(nrow=0,ncol=3))
       for(i in 0:1){
         # dividend based on matrix type
-        h <- ifelse(matrixType=="perc",nrow(data[data$ref==i,]),1)
-        # filling matrix with number (sum) or percentage (perc) of epochs in each condition
+        h <- ifelse(matrixType=="prop",nrow(data[data$ref==i,]),1)
+        # filling matrix with number (sum) or proportions (prop) of epochs in each condition
         errMatrix <- rbind(errMatrix,
                            data.frame(reference=names(stages)[i+1],
                                       device_wake=nrow(data[data$device==0 & data$ref==i,])/h,
                                       device_sleep=nrow(data[data$device==1 & data$ref==i,])/h,
-                                      reference_tot=nrow(data[data$ref==i,])/h)) }
+                                      reference_tot=nrow(data[data$ref==i,]))) }
       return(rbind(errMatrix,
                    # adding marginal sums
                    data.frame(reference="device_tot",device_wake=nrow(data[data$device==0,]),
