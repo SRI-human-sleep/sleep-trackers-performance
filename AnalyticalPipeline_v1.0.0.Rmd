@@ -2037,7 +2037,7 @@ errorMatrix <- function(data=NA,idCol="subject",RefCol="reference",deviceCol="de
       errMatrix <- as.data.frame(matrix(nrow=0,ncol=3))
       for(i in 0:1){
         # dividend based on matrix type
-        h <- ifelse(matrixType=="perc",nrow(data[data$ref==i,]),1)
+        h <- ifelse(matrixType=="prop",nrow(data[data$ref==i,]),1)
         # filling matrix with number (sum) or percentage (perc) of epochs in each condition
         errMatrix <- rbind(errMatrix,
                            data.frame(reference=names(stages)[i+1],
