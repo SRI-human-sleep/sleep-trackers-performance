@@ -2444,7 +2444,7 @@ Here, we compute the group-level basic (i.e., accuracy, sensitivity, specificity
 ```{r warning=FALSE,message=FALSE}
 
 groupEBE <- function(data=NA,idCol="subject",RefCol="reference",deviceCol="device",
-                     stage=0,stageLabel="wake",metricsType="avg",CI.type="classic",CI.level=.95,boot.type="basic",boot.R=10000,
+                     stage=5,stageLabel="sleep",metricsType="avg",CI.type="classic",CI.level=.95,boot.type="basic",boot.R=10000,
                      advancedMetrics=FALSE,doROC=FALSE,digits=2){
   
   # renaming variables
@@ -2503,10 +2503,10 @@ groupEBE <- function(data=NA,idCol="subject",RefCol="reference",deviceCol="devic
                             (errMatrix[1,2]+errMatrix[2,2]+errMatrix[1,3]+errMatrix[2,3]),2)
       # positive predictive value
       ppv <- round(100*(sensitivity*prevalence)/
-                     (sensitivity*prevalence + (1-specificity)*(1-prevalence)),digits)
+                     (sensitivity*prevalence + (100-specificity)*(100-prevalence)),digits)
       # negative predictive value
-      npv <- round(100*(specificity*(1-prevalence))/
-                     ((1-specificity)*prevalence + specificity*(1-prevalence)),digits)
+      npv <- round(100*(specificity*(100-prevalence))/
+                     ((100-specificity)*prevalence + specificity*(100-prevalence)),digits)
       # Cohen's kappa
       kappa <- round(epi.kappa(as.table(as.matrix(errMatrix[1:2,2:3])))$kappa$est,digits)
       # PABAK
@@ -2665,7 +2665,7 @@ Here, we use the function to generate the basic EBE metrics by assuming that onl
 
 ```{r warning=FALSE,message=FALSE,out.width='60%'}
 
-groupEBE(data=dic.data,stage=10,stageLabel="wake",metricsType="avg",CI.type="boot",advancedMetrics=FALSE)
+groupEBE(data=dic.data,stage=5,stageLabel="sleep",metricsType="avg",CI.type="boot",advancedMetrics=FALSE)
 
 ```
 
@@ -2675,7 +2675,7 @@ Alternatively, the *metricsType* argument can be set as “sum” to report EBE 
 
 ```{r warning=FALSE,message=FALSE,out.width='60%'}
 
-groupEBE(data=dic.data,stage=10,stageLabel="wake",metricsType="sum",advancedMetrics=FALSE)
+groupEBE(data=dic.data,stage=5,stageLabel="sleep",metricsType="sum",advancedMetrics=FALSE)
 
 ```
 
@@ -2689,7 +2689,7 @@ Here, we use the function to generate both the basic and the "advanced" EBE metr
 
 ```{r warning=FALSE,message=FALSE,out.width='60%'}
 
-groupEBE(data=dic.data,stage=10,stageLabel="wake",metricsType="avg",CI.type="boot",advancedMetrics=FALSE)
+groupEBE(data=dic.data,stage=5,stageLabel="sleep",metricsType="avg",CI.type="boot",advancedMetrics=TRUE)
 
 ```
 
@@ -2699,7 +2699,7 @@ Alternatively, the *metricsType* argument can be set as “sum” to report EBE 
 
 ```{r warning=FALSE,message=FALSE,out.width='60%'}
 
-groupEBE(data=dic.data,stage=10,stageLabel="wake",metricsType="sum",advancedMetrics=FALSE)
+groupEBE(data=dic.data,stage=5,stageLabel="sleep",metricsType="sum",advancedMetrics=TRUE)
 
 ```
 
