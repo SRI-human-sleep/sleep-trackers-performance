@@ -58,10 +58,10 @@ groupEBE <- function(data=NA,idCol="subject",RefCol="reference",deviceCol="devic
                             (errMatrix[1,2]+errMatrix[2,2]+errMatrix[1,3]+errMatrix[2,3]),2)
       # positive predictive value
       ppv <- round(100*(sensitivity*prevalence)/
-                     (sensitivity*prevalence + (1-specificity)*(1-prevalence)),digits)
+                     (sensitivity*prevalence + (100-specificity)*(100-prevalence)),digits)
       # negative predictive value
-      npv <- round(100*(specificity*(1-prevalence))/
-                     ((1-specificity)*prevalence + specificity*(1-prevalence)),digits)
+      npv <- round(100*(specificity*(100-prevalence))/
+                     ((100-specificity)*prevalence + specificity*(100-prevalence)),digits)
       # Cohen's kappa
       kappa <- round(epi.kappa(as.table(as.matrix(errMatrix[1:2,2:3])))$kappa$est,digits)
       # PABAK
