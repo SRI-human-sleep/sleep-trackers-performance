@@ -26,4 +26,4 @@ The following functions are included:
 
 ## Updates
 
-Sept 8th 2023: Spotted and corrected errors in the computation of prevalence, PPV, and NPV within the `groupEBE` function. We thank @selectwait and Dr. Satomi Okabe for spotting the errors.
+- Sept 8th 2023: Spotted and corrected errors in the computation of prevalence, PPV, and NPV within the `groupEBE` function. We thank @selectwait and Dr. Satomi Okabe for spotting the errors.
