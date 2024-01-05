@@ -10,7 +10,7 @@ groupDiscr <- function(data=NA,measures=c("TST_device","TST_ref"),size="referenc
   if(warnings==TRUE){cat("\n\n----------------\n Measure:",measure,"\n----------------")}
   
   # packages and functions to be used with boostrap CI
-  if(CI.type=="boot"){ 
+  if(CI.type=="boot"){ require(boot)
     # functions to generate bootstrap CI for model parameters
     boot.reg <- function(data,formula,indices){ return(coef(lm(formula,data=data[indices,]))[2]) } # slope
     boot.int <- function(data,formula,indices){ return(coef(lm(formula,data=data[indices,]))[1]) } # intercept
