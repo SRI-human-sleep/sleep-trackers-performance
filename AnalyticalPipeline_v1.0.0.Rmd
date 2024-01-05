@@ -748,7 +748,7 @@ groupDiscr <- function(data=NA,measures=c("TST_device","TST_ref"),size="referenc
           ").","\nBootstrap CI (CI.type='boot') are recommended.",sep="")} } else { normality = TRUE }
     
     # updating output table
-    out <- cbind(out[,1:6],logTransf=FALSE,normality=normality,heterosced=heterosced,out[,7:ncol(out)])
+    out <- cbind(out[,1:6],logTransf=TRUE,normality=normality,heterosced=heterosced,out[,7:ncol(out)])
     
     # LOAs slope following Euser et al (2008) for antilog transformation: slope = 2 * (e^(1.96 SD) - 1)/(e^(1.96 SD) + 1)
     ANTILOGslope <- function(x){ 2 * (exp(1.96 * sd(x)) - 1) / (exp(1.96*sd(x)) + 1) }
