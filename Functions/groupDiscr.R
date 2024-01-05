@@ -114,7 +114,7 @@ groupDiscr <- function(data=NA,measures=c("TST_device","TST_ref"),size="referenc
         ").","\nBootstrap CI (CI.type='boot') and log transformation (logTransf=TRUE) are recommended.",sep="")} } else { normality = TRUE }
     
     # updating output table
-    out <- cbind(out[,1:6],logTransf=FALSE,normality=normality,heterosced=heterosced,out[,7:ncol(out)])
+    out <- cbind(out[,1:6],logTransf=TRUE,normality=normality,heterosced=heterosced,out[,7:ncol(out)])
     
     # ...............................................
     # 2.1. CONSTANT BIAS AND HOMOSCEDASTICITY
